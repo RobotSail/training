@@ -20,10 +20,12 @@ from torch.distributed import (
 
 import deepspeed
 from deepspeed.ops.adam import FusedAdam
-from multipack_sampler import find_packing_max_batch_len_and_grad_accum
-from token_dataset import setup_dataloader, setup_dataset
-from tokenizer_utils import setup_tokenizer
-from utils import save_hf_format_ds, set_random_seed, setup_logger, convert_loss_to_reduce_sum
+from ilab_train.multipack_sampler import find_packing_max_batch_len_and_grad_accum
+from ilab_train.token_dataset import setup_dataloader, setup_dataset
+from ilab_train.tokenizer_utils import setup_tokenizer
+from ilab_train.utils import save_hf_format_ds, set_random_seed, setup_logger, convert_loss_to_reduce_sum
+from ilab_train.config import FullTrainArgs, TorchrunTrainArgs
+
 
 
 def get_ds_config(world_size, samples_per_gpu, grad_accum):
@@ -243,6 +245,97 @@ def main(args):
 
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
+
+
+
+def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
+    """
+    Wrapper around the main training job that calls torchrun.
+    """
+    try:
+        command = [
+            "torchrun",
+            f"--nnodes={torch_args.nnodes}",
+            f"--node_rank={torch_args.node_rank}",
+            f"--nproc_per_node={torch_args.nproc_per_node}",
+            f"--rdzv_id={torch_args.rdzv_id}",
+            f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
+            __file__,
+            f"--model_name_or_path={train_args.model_name_or_path}",
+            f"--data_path={train_args.data_path}",
+            f"--output_dir={train_args.output_dir}",
+            f"--num_epochs={train_args.num_epochs}",
+            f"--effective_batch_size={train_args.effective_batch_size}",
+            f"--learning_rate={train_args.learning_rate}",
+            f"--num_warmup_steps={train_args.num_warmup_steps}",
+            f"--save_samples={train_args.save_samples}",
+            f"--log_level={train_args.log_level}",
+            f"--max_batch_len={train_args.max_batch_len}",
+            f"--seed={train_args.seed}"
+        ]
+
+        if train_args.mock_data:
+            command.append("--mock_data")
+            if train_args.mock_len:
+                command.append(f"--mock_len={train_args.mock_len}")
+
+        if train_args.is_granite:
+            command.append("--is_granite")
+
+        print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
+
+        with open('logfile.out', 'w', encoding='utf-8') as logfile:
+            subprocess.run(
+                command,
+                stdout=logfile,
+                stderr=subprocess.STDOUT,
+            )
+
+        # stream the stdout and stderr output
+        # process = subprocess.Popen(
+        #     command,
+        #     stdout=subprocess.PIPE,
+        #     stderr=subprocess.STDOUT,
+        #     bufsize=1,
+        #     universal_newlines=True
+        # )
+        # while True:
+        #     output = process.stdout.readline()
+        #     if output == "" and process.poll() is not None:
+        #         break
+        #     if output:
+        #         print(output.strip())
+            
+        #     rc = process.poll()
+
+        #     if rc != 0:
+        #         if process.stderr:
+        #             print(process.stderr)
+        #         if process.stdout:
+        #             print(process.stdout)
+        #         break
+
+        # for line in iter(process.stdout.readline, b''):
+        #     print(line.decode('utf-8'), end='')
+        # process.stdout.close()
+        # process.wait()
+    except KeyboardInterrupt:
+        print("Process interrupted by user")
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+    finally:
+        if 'process' not in locals() or process is None:
+            return
+
+        print("\033[91mTerminating process 🤖\033[0m")
+        process.terminate()
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            print("\033[91mProcess did not terminate in time, killing it.\033[0m")
+            process.kill()
+
+
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from transformers import AutoTokenizer
 
-from utils import log_rank_0
+from ilab_train.utils import log_rank_0
 
 
 @dataclass
