@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import yaml
+from enum import Enum
 
 @dataclass
 class TorchrunTrainArgs:
@@ -23,24 +24,30 @@ class FullTrainArgs:
     """
     This class represents the arguments being used by the training script.
     """
+    model_path: str
     data_path: str
-    input_dir: str
-    model_name_or_path: str
-    output_dir: str
+    ckpt_output_path: str
+
+    num_gpus: int
+    max_seq_len: int
+    max_batch_len: int
     num_epochs: int
     effective_batch_size: int
-    learning_rate: float
-    num_warmup_steps: int
     save_samples: int
-    log_level: str
-    seed: int
-    mock_data: bool
-    mock_len: int
-    is_granite: bool
-    max_batch_len: int
-    # I don't believe this is actually used anywhere anymore,
-    # but we should still keep it to avoid changing too much at once
-    samples_per_gpu: int
+    learning_rate: float
+    warmup_steps: int
+
+    ds_offload_strat: Enum["cpu", "nvme", None]
+    cpu_offload_optimizer: bool
+    cpu_offload_params: bool
+
+    quantize_dtype: Enum["nf4", "fp8", None] #fp8 requires transformer engine or microsoft emp (not robust libraries though).
+    lora: bool
+    lora_rank: int
+    lora_alpha: float
+    lora_dropout: float
+    target_modules: list
+
 
     def __str__(self):
         return yaml.dump(vars(self), sort_keys=False)

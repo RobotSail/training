@@ -1,7 +1,9 @@
 pyyaml
+py-cpuinfo
 torch>=2.2.0
-deepspeed
 transformers
 datasets
 numba
 numpy
+
+deepspeed
