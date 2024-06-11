@@ -15,7 +15,7 @@ setup(
     install_requires=requirements,
     entry_points={
         'console_scripts': [
-            'itrain=ilab_train.main_ds:main',
+            'train=train.main_ds:main',
         ],
     },
 )
