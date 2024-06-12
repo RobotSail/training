@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from transformers import AutoTokenizer
 
-from training.utils import log_rank_0
+from instructlab.training.utils import log_rank_0
 
 
 @dataclass

@@ -15,17 +15,19 @@ from torch.distributed import (
 
 import deepspeed
 from deepspeed.ops.adam import FusedAdam
-from training.multipack_sampler import find_packing_max_batch_len_and_grad_accum
-from training.token_dataset import setup_dataloader, setup_dataset
-from training.tokenizer_utils import setup_tokenizer
-from training.utils import (
+from instructlab.training.multipack_sampler import (
+    find_packing_max_batch_len_and_grad_accum,
+)
+from instructlab.training.token_dataset import setup_dataloader, setup_dataset
+from instructlab.training.tokenizer_utils import setup_tokenizer
+from instructlab.training.utils import (
     save_hf_format_ds,
     save_model_ds_native,
     set_random_seed,
     setup_logger,
     convert_loss_to_reduce_sum,
 )
-from training.config import FullTrainArgs, TorchrunTrainArgs
+from instructlab.training.config import FullTrainArgs, TorchrunTrainArgs
 
 
 def get_ds_config(world_size, samples_per_gpu, grad_accum):

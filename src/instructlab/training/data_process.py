@@ -5,8 +5,13 @@ from typing import List
 import numpy as np
 from datasets import load_dataset
 
-from training.tokenizer_utils import SPECIAL_TOKENS, get_sp_token, setup_tokenizer
-from training.utils import log_rank_0, setup_logger
+from instructlab.training.tokenizer_utils import (
+    SPECIAL_TOKENS,
+    get_sp_token,
+    setup_tokenizer,
+)
+from instructlab.training.utils import log_rank_0, setup_logger
+from instructlab.training.config import DataProcessArgs
 
 
 def check_valid_sample(
@@ -179,7 +184,7 @@ def unmask_only_assistant_responses_from_list(
     return labels.tolist()
 
 
-def remove_pretrain_system_messages(example):
+def remove_pretrain_system_messages(example: dict):
     messages = example["messages"]
     has_pretraining = any(m["role"] == "pretraining" for m in messages)
     if has_pretraining:
@@ -188,9 +193,8 @@ def remove_pretrain_system_messages(example):
     return {"messages": messages}
 
 
-def main(args):
-    setup_logger(args.logging_level)
-    tokenizer = setup_tokenizer(args.model_name_or_path)
+def main(args: DataProcessArgs):
+    tokenizer = setup_tokenizer(args.model_path)
 
     eos_tk = get_sp_token(tokenizer, SPECIAL_TOKENS.eos)
     pad_tk = get_sp_token(tokenizer, SPECIAL_TOKENS.pad)
@@ -205,7 +209,7 @@ def main(args):
     print("\033[92mremoving pretraining samples system msg\033[0m")
     data = data.map(remove_pretrain_system_messages, num_proc=72)
 
-    logging.info(f"tokenizing the dataset with {args.model_name_or_path} tokenizer...")
+    logging.info(f"tokenizing the dataset with {args.model_path} tokenizer...")
     data_with_input_ids = data.map(
         lambda x: {
             "input_ids": tokenizer.apply_chat_template(x["messages"], tokenize=True)
@@ -295,7 +299,14 @@ if __name__ == "__main__":
         "--model_name_or_path", type=str, required=True, help="Model name or path"
     )
     args = parser.parse_args()
-    main(args)
+    setup_logger(args.logging_level)
+    data_process_args = DataProcessArgs(
+        data_output_path=args.data_output_path,
+        data_path=args.data_path,
+        max_seq_len=args.max_seq_len,
+        model_path=args.model_name_or_path,
+    )
+    main(data_process_args)
 
 """
 python data_process.py --logging_level INFO --data_path "/new_data/refactored/chat-multiturn/oasst2_arena.jsonl" --data_output_path "./" --max_seq_len 4600 --model_name_or_path "mistralai/Mistral-7B-v0.1"

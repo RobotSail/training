@@ -2,6 +2,21 @@ from dataclasses import dataclass
 import yaml
 from enum import Enum
 
+
+@dataclass
+class DataProcessArgs:
+    """
+    All the arguments consumed by the training data pre-process script.
+    """
+
+    # TODO(osilkin): artifact of data_process being a script, this should be removed l8r
+    data_path: str
+    # XXX(osilkin): this is a fun one lol. Should probably go to /tmp/something
+    data_output_path: str
+    max_seq_len: str  # defines the max sequence length of a sample
+    model_path: str  # either a HF model name or path to HF model
+
+
 @dataclass
 class TorchrunTrainArgs:
     """
@@ -9,6 +24,7 @@ class TorchrunTrainArgs:
     The full list of arguments can be found here:
     https://pytorch.org/docs/stable/elastic/run.html#definitions
     """
+
     nproc_per_node: int
     nnodes: int
     node_rank: int
@@ -24,6 +40,7 @@ class FullTrainArgs:
     """
     This class represents the arguments being used by the training script.
     """
+
     model_path: str
     data_path: str
     ckpt_output_path: str
@@ -41,14 +58,14 @@ class FullTrainArgs:
     cpu_offload_optimizer: bool
     cpu_offload_params: bool
 
-    quantize_dtype: Enum["nf4", "fp8", None] #fp8 requires transformer engine or microsoft emp (not robust libraries though).
+    quantize_dtype: Enum[
+        "nf4", "fp8", None
+    ]  # fp8 requires transformer engine or microsoft emp (not robust libraries though).
     lora: bool
     lora_rank: int
     lora_alpha: float
     lora_dropout: float
     target_modules: list
 
-
     def __str__(self):
         return yaml.dump(vars(self), sort_keys=False)
-
