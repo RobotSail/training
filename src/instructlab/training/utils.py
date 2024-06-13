@@ -1,6 +1,8 @@
 import inspect
 from pathlib import Path
 import random
+import subprocess
+import sys
 import time
 from typing import List, Optional
 import numpy as np
@@ -14,6 +16,28 @@ from torch.distributed.fsdp import (
 )
 from rich.logging import RichHandler
 import logging
+
+
+class StreamablePopen(subprocess.Popen):
+    """
+    Provides a way of reading stdout and stderr line by line.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # remove the stderr and stdout from kwargs
+        kwargs.pop("stderr", None)
+        kwargs.pop("stdout", None)
+
+        super().__init__(*args, **kwargs)
+        while True:
+            if self.stdout:
+                output = self.stdout.readline().strip()
+                print(output)
+            if self.stderr:
+                error = self.stderr.readline().strip()
+                print(error, file=sys.stderr)
+            if self.poll() is not None:
+                break
 
 
 def convert_loss_to_reduce_sum(model, is_granite=False):

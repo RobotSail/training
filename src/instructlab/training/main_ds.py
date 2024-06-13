@@ -30,6 +30,7 @@ from instructlab.training.utils import (
     set_random_seed,
     setup_logger,
     convert_loss_to_reduce_sum,
+    StreamablePopen,
 )
 from instructlab.training.config import (
     FullTrainArgs,
@@ -492,43 +493,8 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
             )
 
         print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
+        process = StreamablePopen(command)
 
-        with open("logfile.out", "w", encoding="utf-8") as logfile:
-            subprocess.run(
-                command,
-                stdout=logfile,
-                stderr=subprocess.STDOUT,
-            )
-
-        # TODO: we need to implement
-        # stream the stdout and stderr output
-        # process = subprocess.Popen(
-        #     command,
-        #     stdout=subprocess.PIPE,
-        #     stderr=subprocess.STDOUT,
-        #     bufsize=1,
-        #     universal_newlines=True
-        # )
-        # while True:
-        #     output = process.stdout.readline()
-        #     if output == "" and process.poll() is not None:
-        #         break
-        #     if output:
-        #         print(output.strip())
-
-        #     rc = process.poll()
-
-        #     if rc != 0:
-        #         if process.stderr:
-        #             print(process.stderr)
-        #         if process.stdout:
-        #             print(process.stdout)
-        #         break
-
-        # for line in iter(process.stdout.readline, b''):
-        #     print(line.decode('utf-8'), end='')
-        # process.stdout.close()
-        # process.wait()
     except KeyboardInterrupt:
         print("Process interrupted by user")
     except Exception as e:
