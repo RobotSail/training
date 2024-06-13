@@ -23,7 +23,6 @@ def convert_loss_to_reduce_sum(model, is_granite=False):
     if is_granite:
 
         def get_autoregressive_language_modeling_loss(
-            self,
             lm_logits: torch.Tensor,
             labels: torch.Tensor,
             cu_seqlens: torch.Tensor,
