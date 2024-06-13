@@ -10,14 +10,12 @@ from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
     get_scheduler,
-    MistralForCausalLM,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
 )
 from torch.distributed import (
     ReduceOp,
     all_reduce,
 )
+import subprocess
 
 import deepspeed
 from deepspeed.ops.adam import FusedAdam
@@ -435,7 +433,6 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
     Wrapper around the main training job that calls torchrun.
     """
     # process the training data
-    processed_training_data_path = "/tmp/training_data.jsonl"
     dp.main(
         DataProcessArgs(
             # XXX(osilkin): make a decision here, either:
@@ -444,13 +441,15 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
             #
             # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
             # where the user has a defined place for new temporary data to be written.
-            data_output_path=processed_training_data_path,
+            data_output_path=train_args.processed_data_output_path,
             model_path=train_args.model_path,
             data_path=train_args.data_path,
             max_seq_len=train_args.max_seq_len,
         )
     )
 
+    if not os.path.exists(train_args.output_dir):
+        os.makedirs(train_args.output_dir)
     try:
         command = [
             "torchrun",
@@ -461,7 +460,7 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
             f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
             __file__,
             f"--model_name_or_path={train_args.model_name_or_path}",
-            f"--data_path={train_args.data_path}",
+            f"--data_path={train_args.processed_data_output_path}",
             f"--output_dir={train_args.output_dir}",
             f"--num_epochs={train_args.num_epochs}",
             f"--effective_batch_size={train_args.effective_batch_size}",
@@ -481,6 +480,17 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
         if train_args.is_granite:
             command.append("--is_granite")
 
+        if train_args.lora:
+            command.extend(
+                [
+                    f"--lora_r={train_args.lora.lora_rank}",
+                    f"--lora_alpha={train_args.lora.lora_alpha}",
+                    f"--lora_dropout={train_args.lora.lora_dropout}",
+                    f"--lora_quant_bits={train_args.lora.lora_quant_bits}",
+                    f"--lora_target_modules={' '.join(train_args.lora.target_modules)}",
+                ]
+            )
+
         print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
 
         with open("logfile.out", "w", encoding="utf-8") as logfile:
@@ -490,6 +500,7 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
                 stderr=subprocess.STDOUT,
             )
 
+        # TODO: we need to implement
         # stream the stdout and stderr output
         # process = subprocess.Popen(
         #     command,

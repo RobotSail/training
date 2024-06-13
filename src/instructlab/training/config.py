@@ -3,6 +3,28 @@ import yaml
 from enum import Enum
 
 
+class DeepSpeedOffloadStrategy(Enum):
+    """
+    Defines the offload strategy for DeepSpeed.
+
+    To learn more, read about it here: https://www.deepspeed.ai/tutorials/zero-offload/
+    """
+
+    CPU = "cpu"
+    NVME = "nvme"
+    NONE = None
+
+
+class QuantizeDataType(Enum):
+    """
+    Defines what datatype we use during quantization.
+    """
+
+    NF4 = "nf4"
+    FP8 = "fp8"
+    NONE = None
+
+
 class YAMLAble:
     """
     For our classes to easily be printable
@@ -18,9 +40,7 @@ class DataProcessArgs(YAMLAble):
     All the arguments consumed by the training data pre-process script.
     """
 
-    # TODO(osilkin): artifact of data_process being a script, this should be removed l8r
     data_path: str
-    # XXX(osilkin): this is a fun one lol. Should probably go to /tmp/something
     data_output_path: str
     max_seq_len: str  # defines the max sequence length of a sample
     model_path: str  # either a HF model name or path to HF model
@@ -42,14 +62,33 @@ class TorchrunTrainArgs(YAMLAble):
 
 
 @dataclass
+class LoraOptions:
+    """
+    Options to specify when training using a LoRA.
+    """
+
+    lora_rank: int
+    lora_alpha: float
+    lora_dropout: float
+    target_modules: list
+
+
+@dataclass
 class FullTrainArgs(YAMLAble):
     """
     This class represents the arguments being used by the training script.
     """
 
+    # Either the name of a HuggingFace model or a path to a model saved in HuggingFace format.
     model_path: str
+
+    # this field specifies the filepath to the training dataset before processing
     data_path: str
     ckpt_output_path: str
+
+    # this field defines where we should be saving the processed version of the training dataset
+    # after we have tokenized it
+    processed_data_output_path: str
 
     num_gpus: int
     max_seq_len: int
@@ -60,18 +99,9 @@ class FullTrainArgs(YAMLAble):
     learning_rate: float
     warmup_steps: int
 
-    # ds_offload_strat: Enum["cpu", "nvme", None]
-    ds_offload_strat: str | None  # one of 'cpu', 'nvme', or None
+    ds_offload_strat: DeepSpeedOffloadStrategy
     cpu_offload_optimizer: bool
     cpu_offload_params: bool
 
-    # quantize_dtype: Enum[
-    #     "nf4", "fp8", None
-    # ]  # fp8 requires transformer engine or microsoft emp (not robust libraries though).
-    # fp8 requires transformer engine or microsoft emp (not robust libraries though).
-    quantize_dtype: str | None
-    lora: bool
-    lora_rank: int
-    lora_alpha: float
-    lora_dropout: float
-    target_modules: list
+    quantize_dtype: QuantizeDataType
+    lora: LoraOptions | None
