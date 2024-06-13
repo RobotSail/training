@@ -1,10 +1,11 @@
 pyyaml
 py-cpuinfo
-torch>=2.2.0
+torch>=2.3.0
 transformers
 datasets
 numba
 numpy
 rich
 
+# deepspeed needs to be at the bottom or it'll break during installation
 deepspeed
