@@ -7,7 +7,13 @@ import re
 import time
 import torch
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, get_scheduler, MistralForCausalLM
+from transformers import (
+    AutoModelForCausalLM,
+    get_scheduler,
+    MistralForCausalLM,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
+)
 from torch.distributed import (
     ReduceOp,
     all_reduce,
@@ -27,7 +33,12 @@ from instructlab.training.utils import (
     setup_logger,
     convert_loss_to_reduce_sum,
 )
-from instructlab.training.config import FullTrainArgs, TorchrunTrainArgs
+from instructlab.training.config import (
+    FullTrainArgs,
+    TorchrunTrainArgs,
+    DataProcessArgs,
+)
+import instructlab.training.data_process as dp
 
 
 def get_ds_config(world_size, samples_per_gpu, grad_accum):
@@ -423,6 +434,23 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
     """
     Wrapper around the main training job that calls torchrun.
     """
+    # process the training data
+    processed_training_data_path = "/tmp/training_data.jsonl"
+    dp.main(
+        DataProcessArgs(
+            # XXX(osilkin): make a decision here, either:
+            #   1. the CLI is fully responsible for managing where the data is written
+            #   2. we never cache it and simply write it to a tmp file everytime.
+            #
+            # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
+            # where the user has a defined place for new temporary data to be written.
+            data_output_path=processed_training_data_path,
+            model_path=train_args.model_path,
+            data_path=train_args.data_path,
+            max_seq_len=train_args.max_seq_len,
+        )
+    )
+
     try:
         command = [
             "torchrun",

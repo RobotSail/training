@@ -3,8 +3,17 @@ import yaml
 from enum import Enum
 
 
+class YAMLAble:
+    """
+    For our classes to easily be printable
+    """
+
+    def __str__(self):
+        return yaml.dump(vars(self), sort_keys=False)
+
+
 @dataclass
-class DataProcessArgs:
+class DataProcessArgs(YAMLAble):
     """
     All the arguments consumed by the training data pre-process script.
     """
@@ -18,7 +27,7 @@ class DataProcessArgs:
 
 
 @dataclass
-class TorchrunTrainArgs:
+class TorchrunTrainArgs(YAMLAble):
     """
     Representation of the arguments being used by torchrun.
     The full list of arguments can be found here:
@@ -31,12 +40,9 @@ class TorchrunTrainArgs:
     rdzv_id: int
     rdzv_endpoint: str
 
-    def __str__(self):
-        return yaml.dump(vars(self), sort_keys=False)
-
 
 @dataclass
-class FullTrainArgs:
+class FullTrainArgs(YAMLAble):
     """
     This class represents the arguments being used by the training script.
     """
@@ -54,18 +60,18 @@ class FullTrainArgs:
     learning_rate: float
     warmup_steps: int
 
-    ds_offload_strat: Enum["cpu", "nvme", None]
+    # ds_offload_strat: Enum["cpu", "nvme", None]
+    ds_offload_strat: str | None  # one of 'cpu', 'nvme', or None
     cpu_offload_optimizer: bool
     cpu_offload_params: bool
 
-    quantize_dtype: Enum[
-        "nf4", "fp8", None
-    ]  # fp8 requires transformer engine or microsoft emp (not robust libraries though).
+    # quantize_dtype: Enum[
+    #     "nf4", "fp8", None
+    # ]  # fp8 requires transformer engine or microsoft emp (not robust libraries though).
+    # fp8 requires transformer engine or microsoft emp (not robust libraries though).
+    quantize_dtype: str | None
     lora: bool
     lora_rank: int
     lora_alpha: float
     lora_dropout: float
     target_modules: list
-
-    def __str__(self):
-        return yaml.dump(vars(self), sort_keys=False)

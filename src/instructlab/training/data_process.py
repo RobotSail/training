@@ -4,6 +4,7 @@ from typing import List
 
 import numpy as np
 from datasets import load_dataset
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from instructlab.training.tokenizer_utils import (
     SPECIAL_TOKENS,
@@ -15,7 +16,13 @@ from instructlab.training.config import DataProcessArgs
 
 
 def check_valid_sample(
-    tokenizer, whole_sentence_tk, system_tk, assistant_tk, user_tk, eos_tk, max_len=1024
+    tokenizer: PreTrainedTokenizer | PreTrainedTokenizerFast,
+    whole_sentence_tk: list[int],
+    system_tk: int,
+    assistant_tk: int,
+    user_tk: int,
+    eos_tk: int,
+    max_len: int = 1024,
 ):
     if len(whole_sentence_tk) >= max_len or len(whole_sentence_tk) < 20:
         return False
