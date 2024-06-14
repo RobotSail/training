@@ -1,7 +1,9 @@
 packaging>=20.9
 pyyaml
 py-cpuinfo
-torch>=2.3.0
+# we set this to be above 0a0 so that it doesn't
+# replace custom pytorch images with the 2.3.0
+torch>=2.3.0a0
 transformers==4.41.2
 datasets
 numba
@@ -9,6 +11,7 @@ numpy
 rich
 dolomite_engine
 trl==0.9.4
+omegaconf>=2.3.0
 peft
 # TODO: add dolomite_engine as a dependency
 # for the time being, you can install it using this command:

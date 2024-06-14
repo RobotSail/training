@@ -19,6 +19,7 @@ import subprocess
 
 import deepspeed
 from deepspeed.ops.adam import FusedAdam
+from instructlab.training import config
 from instructlab.training.multipack_sampler import (
     find_packing_max_batch_len_and_grad_accum,
 )
@@ -34,13 +35,14 @@ from instructlab.training.utils import (
 )
 from instructlab.training.config import (
     FullTrainArgs,
-    TorchrunTrainArgs,
+    TorchrunArgs,
     DataProcessArgs,
+    DeepSpeedOptions,
 )
 import instructlab.training.data_process as dp
 
 
-def get_ds_config(world_size, samples_per_gpu, grad_accum):
+def get_ds_config(world_size, samples_per_gpu, grad_accum, opts: DeepSpeedOptions):
     ds_config = {
         "train_batch_size": samples_per_gpu * world_size * grad_accum,
         "gradient_accumulation_steps": grad_accum,
@@ -48,7 +50,9 @@ def get_ds_config(world_size, samples_per_gpu, grad_accum):
         "steps_per_print": 1,
         "zero_optimization": {
             "stage": 2,
+            # TODO(osilkin): update these
             "offload_param": {"device": "none"},
+            # TODO(osilkin): update these
             "offload_optimizer": {"device": "none"},
         },
         "bf16": {"enabled": True},
@@ -56,6 +60,12 @@ def get_ds_config(world_size, samples_per_gpu, grad_accum):
         "prescale_gradients": False,
         "wall_clock_breakdown": False,
     }
+
+    if opts.cpu_offload_optimizer:
+        # this only works when the cpu offload optimizer is enabled
+        ds_config["zero_optimization"]["offload_optimizer"] = {
+            "device": opts.ds_offload_strat
+        }
     return ds_config
 
 
@@ -64,6 +74,7 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
     if args.lora_r > 0 and args.lora_quant_bits == 4:
         from transformers import BitsAndBytesConfig
 
+        # TODO(osilkin): decouple LoRA and BitsAndBytes here since you can quantize w/o lora
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -201,6 +212,10 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
             world_size=torch.distributed.get_world_size(),
             samples_per_gpu=args.samples_per_gpu,
             grad_accum=grad_accum,
+            opts=DeepSpeedOptions(
+                cpu_offload_optimizer=args.cpu_offload_optimizer,
+                ds_offload_strat=args.ds_offload_strat,
+            ),
         ),
         lr_scheduler=lr_scheduler,
         dist_init_required=True,
@@ -429,7 +444,7 @@ def main(args):
     torch.distributed.destroy_process_group()
 
 
-def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
+def run_training(torch_args: TorchrunArgs, train_args: FullTrainArgs):
     """
     Wrapper around the main training job that calls torchrun.
     """
@@ -442,7 +457,7 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
             #
             # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
             # where the user has a defined place for new temporary data to be written.
-            data_output_path=train_args.processed_data_output_path,
+            data_output_path=train_args.data_output_dir,
             model_path=train_args.model_path,
             data_path=train_args.data_path,
             max_seq_len=train_args.max_seq_len,
@@ -450,7 +465,7 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
     )
 
     if not os.path.exists(train_args.output_dir):
-        os.makedirs(train_args.output_dir)
+        os.makedirs(train_args.ckpt_output_path, exist_ok=True)
     try:
         command = [
             "torchrun",
@@ -460,17 +475,17 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
             f"--rdzv_id={torch_args.rdzv_id}",
             f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
             __file__,
-            f"--model_name_or_path={train_args.model_name_or_path}",
-            f"--data_path={train_args.processed_data_output_path}",
-            f"--output_dir={train_args.output_dir}",
+            f"--model_name_or_path={train_args.model_path}",
+            f"--data_path={train_args.data_output_dir}/data.jsonl",
+            f"--output_dir={train_args.ckpt_output_path}",
             f"--num_epochs={train_args.num_epochs}",
             f"--effective_batch_size={train_args.effective_batch_size}",
             f"--learning_rate={train_args.learning_rate}",
-            f"--num_warmup_steps={train_args.num_warmup_steps}",
+            f"--warmup_steps={train_args.warmup_steps}",
             f"--save_samples={train_args.save_samples}",
-            f"--log_level={train_args.log_level}",
+            f"--log_level=INFO",
             f"--max_batch_len={train_args.max_batch_len}",
-            f"--seed={train_args.seed}",
+            f"--seed={train_args.random_seed}",
         ]
 
         if train_args.mock_data:
@@ -484,13 +499,14 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
         if train_args.lora:
             command.extend(
                 [
-                    f"--lora_r={train_args.lora.lora_rank}",
-                    f"--lora_alpha={train_args.lora.lora_alpha}",
-                    f"--lora_dropout={train_args.lora.lora_dropout}",
-                    f"--lora_quant_bits={train_args.lora.lora_quant_bits}",
+                    f"--lora_r={train_args.lora.rank}",
+                    f"--lora_alpha={train_args.lora.alpha}",
+                    f"--lora_dropout={train_args.lora.dropout}",
                     f"--lora_target_modules={' '.join(train_args.lora.target_modules)}",
                 ]
             )
+            if train_args.quantize_dtype:
+                command.append(f"--lora_quant_bits={train_args.quantize_dtype}")
 
         print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
         process = StreamablePopen(command)
@@ -513,6 +529,8 @@ def run_training(torch_args: TorchrunTrainArgs, train_args: FullTrainArgs):
 
 
 if __name__ == "__main__":
+    # TODO(osilkin): Configure a type that these args must adhere to for the sake of type checking
+    #               Maybe switch out from argparse to something smarter
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name_or_path", type=str)
     parser.add_argument("--data_path", type=str)
@@ -555,6 +573,18 @@ if __name__ == "__main__":
     parser.add_argument("--lora_quant_bits", type=int, default=None)
     parser.add_argument("--lora_target_modules", nargs="+", default=None)
     parser.add_argument("--max_batch_len", type=int, default=60000)
+    parser.add_argument(
+        "--ds_offload_strat",
+        type=str,
+        choices=config.DeepSpeedOffloadStrategy._member_names_,
+        help="The offload strategy to use for DeepSpeed. To use this, you must specify the --cpu_offload_optimizer flag.",
+    )
+    parser.add_argument(
+        "--cpu_offload_optimizer",
+        action="store_true",
+        default=False,
+        help="Offload optimizer to CPU when using DeepSpeed. Be sure to specify the --ds_offload_strat flag when enabling this one.",
+    )
     args = parser.parse_args()
     set_random_seed(args.seed)
     main(args)

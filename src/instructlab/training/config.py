@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import yaml
 from enum import Enum
+from omegaconf import MISSING
 
 
 class DeepSpeedOffloadStrategy(Enum):
@@ -21,21 +22,12 @@ class QuantizeDataType(Enum):
     """
 
     NF4 = "nf4"
-    FP8 = "fp8"
+    # FP8 = "fp8" TODO: test and evaluate fp8
     NONE = None
 
 
-class YAMLAble:
-    """
-    For our classes to easily be printable
-    """
-
-    def __str__(self):
-        return yaml.dump(vars(self), sort_keys=False)
-
-
 @dataclass
-class DataProcessArgs(YAMLAble):
+class DataProcessArgs:
     """
     All the arguments consumed by the training data pre-process script.
     """
@@ -47,7 +39,7 @@ class DataProcessArgs(YAMLAble):
 
 
 @dataclass
-class TorchrunTrainArgs(YAMLAble):
+class TorchrunArgs:
     """
     Representation of the arguments being used by torchrun.
     The full list of arguments can be found here:
@@ -67,41 +59,61 @@ class LoraOptions:
     Options to specify when training using a LoRA.
     """
 
-    lora_rank: int
-    lora_alpha: float
-    lora_dropout: float
-    target_modules: list
+    rank: int = 4
+    alpha: float = 32
+    dropout: float = 0.1
+    target_modules: list = field(
+        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
+    )
 
 
 @dataclass
-class FullTrainArgs(YAMLAble):
+class DeepSpeedOptions:
+    """
+    Represents the available options we support when training with the DeepSpeed optimizer.
+    For more information, please read:
+    https://www.deepspeed.ai/docs/config-json/
+    """
+
+    ds_offload_strat: DeepSpeedOffloadStrategy = MISSING
+    cpu_offload_optimizer: bool = MISSING
+
+
+@dataclass
+class FullTrainArgs:
     """
     This class represents the arguments being used by the training script.
     """
 
     # Either the name of a HuggingFace model or a path to a model saved in HuggingFace format.
-    model_path: str
+    model_path: str = MISSING
 
     # this field specifies the filepath to the training dataset before processing
-    data_path: str
-    ckpt_output_path: str
+    data_path: str = MISSING
+    ckpt_output_path: str = MISSING
 
     # this field defines where we should be saving the processed version of the training dataset
     # after we have tokenized it
-    processed_data_output_path: str
+    data_output_dir: str = MISSING
 
-    num_gpus: int
-    max_seq_len: int
-    max_batch_len: int
-    num_epochs: int
-    effective_batch_size: int
-    save_samples: int
-    learning_rate: float
-    warmup_steps: int
+    max_seq_len: int = MISSING
+    max_batch_len: int = MISSING
+    num_epochs: int = MISSING
+    effective_batch_size: int = MISSING
+    save_samples: int = MISSING
+    learning_rate: float = MISSING
+    warmup_steps: int = MISSING
+    is_padding_free: bool = MISSING
+    random_seed: int = MISSING
 
-    ds_offload_strat: DeepSpeedOffloadStrategy
-    cpu_offload_optimizer: bool
-    cpu_offload_params: bool
+    mock_data: bool = False
+    mock_data_len: int = 0
 
-    quantize_dtype: QuantizeDataType
-    lora: LoraOptions | None
+    deepspeed_options: DeepSpeedOptions = field(
+        default_factory=lambda: DeepSpeedOptions(
+            ds_offload_strat=DeepSpeedOffloadStrategy.NONE, cpu_offload_optimizer=False
+        )
+    )
+
+    quantize_dtype: QuantizeDataType = QuantizeDataType.NONE
+    lora: LoraOptions | None = None
