@@ -34,7 +34,7 @@ from instructlab.training.utils import (
     StreamablePopen,
 )
 from instructlab.training.config import (
-    FullTrainArgs,
+    TrainingArgs,
     TorchrunArgs,
     DataProcessArgs,
     DeepSpeedOptions,
@@ -444,11 +444,13 @@ def main(args):
     torch.distributed.destroy_process_group()
 
 
-def run_training(torch_args: TorchrunArgs, train_args: FullTrainArgs):
+def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
     """
     Wrapper around the main training job that calls torchrun.
     """
     # process the training data
+    if not os.path.exists(train_args.data_output_dir):
+        os.makedirs(train_args.data_output_dir, exist_ok=True)
     dp.main(
         DataProcessArgs(
             # XXX(osilkin): make a decision here, either:
@@ -464,8 +466,8 @@ def run_training(torch_args: TorchrunArgs, train_args: FullTrainArgs):
         )
     )
 
-    if not os.path.exists(train_args.output_dir):
-        os.makedirs(train_args.ckpt_output_path, exist_ok=True)
+    if not os.path.exists(train_args.ckpt_output_dir):
+        os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
     try:
         command = [
             "torchrun",

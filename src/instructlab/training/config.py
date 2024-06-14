@@ -80,7 +80,7 @@ class DeepSpeedOptions:
 
 
 @dataclass
-class FullTrainArgs:
+class TrainingArgs:
     """
     This class represents the arguments being used by the training script.
     """
@@ -90,7 +90,7 @@ class FullTrainArgs:
 
     # this field specifies the filepath to the training dataset before processing
     data_path: str = MISSING
-    ckpt_output_path: str = MISSING
+    ckpt_output_dir: str = MISSING
 
     # this field defines where we should be saving the processed version of the training dataset
     # after we have tokenized it
