@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import yaml
 from enum import Enum
-from omegaconf import MISSING
 
 
 class DeepSpeedOffloadStrategy(Enum):
@@ -75,8 +74,8 @@ class DeepSpeedOptions:
     https://www.deepspeed.ai/docs/config-json/
     """
 
-    ds_offload_strat: DeepSpeedOffloadStrategy = MISSING
-    cpu_offload_optimizer: bool = MISSING
+    ds_offload_strat: DeepSpeedOffloadStrategy
+    cpu_offload_optimizer: bool
 
 
 @dataclass
@@ -86,25 +85,25 @@ class TrainingArgs:
     """
 
     # Either the name of a HuggingFace model or a path to a model saved in HuggingFace format.
-    model_path: str = MISSING
+    model_path: str
 
     # this field specifies the filepath to the training dataset before processing
-    data_path: str = MISSING
-    ckpt_output_dir: str = MISSING
+    data_path: str
+    ckpt_output_dir: str
 
     # this field defines where we should be saving the processed version of the training dataset
     # after we have tokenized it
-    data_output_dir: str = MISSING
+    data_output_dir: str
 
-    max_seq_len: int = MISSING
-    max_batch_len: int = MISSING
-    num_epochs: int = MISSING
-    effective_batch_size: int = MISSING
-    save_samples: int = MISSING
-    learning_rate: float = MISSING
-    warmup_steps: int = MISSING
-    is_padding_free: bool = MISSING
-    random_seed: int = MISSING
+    max_seq_len: int
+    max_batch_len: int
+    num_epochs: int
+    effective_batch_size: int
+    save_samples: int
+    learning_rate: float
+    warmup_steps: int
+    is_padding_free: bool
+    random_seed: int
 
     mock_data: bool = False
     mock_data_len: int = 0
