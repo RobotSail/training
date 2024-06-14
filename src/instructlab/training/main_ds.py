@@ -479,7 +479,7 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
             __file__,
             f"--model_name_or_path={train_args.model_path}",
             f"--data_path={train_args.data_output_dir}/data.jsonl",
-            f"--output_dir={train_args.ckpt_output_path}",
+            f"--output_dir={train_args.ckpt_output_dir}",
             f"--num_epochs={train_args.num_epochs}",
             f"--effective_batch_size={train_args.effective_batch_size}",
             f"--learning_rate={train_args.learning_rate}",
