@@ -16,6 +16,7 @@ from torch.distributed import (
     all_reduce,
 )
 import subprocess
+import omegaconf
 
 import deepspeed
 from deepspeed.ops.adam import FusedAdam
@@ -483,7 +484,7 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
             f"--num_epochs={train_args.num_epochs}",
             f"--effective_batch_size={train_args.effective_batch_size}",
             f"--learning_rate={train_args.learning_rate}",
-            f"--warmup_steps={train_args.warmup_steps}",
+            f"--num_warmup_steps={train_args.warmup_steps}",
             f"--save_samples={train_args.save_samples}",
             f"--log_level=INFO",
             f"--max_batch_len={train_args.max_batch_len}",
