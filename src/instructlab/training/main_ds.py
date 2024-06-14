@@ -495,7 +495,7 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
             if train_args.mock_len:
                 command.append(f"--mock_len={train_args.mock_len}")
 
-        if train_args.is_granite:
+        if train_args.is_padding_free:
             command.append("--is_granite")
 
         if train_args.lora:
