@@ -205,13 +205,17 @@ For example, in a 8-GPU, 2-machine system, we would
 specify the following torchrun config:
 
 ```python
+MASTER_ADDR = os.getenv('MASTER_ADDR')
+MASTER_PORT = os.getnev('MASTER_PORT')
+RDZV_ENDPOINT = f'{MASTER_ADDR}:{MASTER_PORT}'
+
 # on machine 1
 torchrun_args = TorchrunArgs(
 	nnodes = 2, # number of machines 
 	nproc_per_node = 4, # num GPUs per machine
 	node_rank = 0, # node rank for this machine
 	rdzv_id = 123,
-	rdzv_endpoint = '127.0.0.1:12345'
+	rdzv_endpoint = RDZV_ENDPOINT
 )
 
 run_training(
@@ -222,13 +226,17 @@ run_training(
 
 
 ```python
+MASTER_ADDR = os.getenv('MASTER_ADDR')
+MASTER_PORT = os.getnev('MASTER_PORT')
+RDZV_ENDPOINT = f'{MASTER_ADDR}:{MASTER_PORT}'
+
 # on machine 2
 torchrun_args = TorchrunArgs(
     nnodes = 2, # number of machines 
     nproc_per_node = 4, # num GPUs per machine
     node_rank = 1, # node rank for this machine
     rdzv_id = 123,
-    rdzv_endpoint = '127.0.0.1:12345'
+    rdzv_endpoint = f'{MASTER_ADDR}:{MASTER_PORT}'
 )
 
 run_training(
