@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
-import yaml
+from omegaconf import MISSING
 from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 class DeepSpeedOffloadStrategy(Enum):
@@ -11,7 +13,8 @@ class DeepSpeedOffloadStrategy(Enum):
     """
 
     CPU = "cpu"
-    NVME = "nvme"
+    # TODO: update this when we support ZeRO stage-3
+    # NVME = "nvme"
     NONE = None
 
 
@@ -25,8 +28,7 @@ class QuantizeDataType(Enum):
     NONE = None
 
 
-@dataclass
-class DataProcessArgs:
+class DataProcessArgs(BaseModel):
     """
     All the arguments consumed by the training data pre-process script.
     """
@@ -37,8 +39,7 @@ class DataProcessArgs:
     model_path: str  # either a HF model name or path to HF model
 
 
-@dataclass
-class TorchrunArgs:
+class TorchrunArgs(BaseModel):
     """
     Representation of the arguments being used by torchrun.
     The full list of arguments can be found here:
@@ -52,8 +53,7 @@ class TorchrunArgs:
     rdzv_endpoint: str
 
 
-@dataclass
-class LoraOptions:
+class LoraOptions(BaseModel):
     """
     Options to specify when training using a LoRA.
     """
@@ -61,25 +61,27 @@ class LoraOptions:
     rank: int = 4
     alpha: float = 32
     dropout: float = 0.1
-    target_modules: list = field(
+    target_modules: list[str] = Field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
     )
 
 
-@dataclass
-class DeepSpeedOptions:
+class DeepSpeedOptions(BaseModel):
     """
     Represents the available options we support when training with the DeepSpeed optimizer.
     For more information, please read:
     https://www.deepspeed.ai/docs/config-json/
+
+    Defaults are all taken from the above docs.
     """
 
-    ds_offload_strat: DeepSpeedOffloadStrategy
-    cpu_offload_optimizer: bool
+    ds_offload_strat: DeepSpeedOffloadStrategy = DeepSpeedOffloadStrategy.NONE
+    cpu_offload_optimizer: bool = False
+    cpu_offload_optimizer_ratio: float = 1
+    cpu_offload_optimizer_pin_memory: bool = False
 
 
-@dataclass
-class TrainingArgs:
+class TrainingArgs(BaseModel):
     """
     This class represents the arguments being used by the training script.
     """
@@ -103,14 +105,17 @@ class TrainingArgs:
     learning_rate: float
     warmup_steps: int
     is_padding_free: bool
-    random_seed: int
+    random_seed: int = 42
 
     mock_data: bool = False
     mock_data_len: int = 0
 
-    deepspeed_options: DeepSpeedOptions = field(
+    deepspeed_options: DeepSpeedOptions = Field(
         default_factory=lambda: DeepSpeedOptions(
-            ds_offload_strat=DeepSpeedOffloadStrategy.NONE, cpu_offload_optimizer=False
+            ds_offload_strat=DeepSpeedOffloadStrategy.NONE,
+            cpu_offload_optimizer=False,
+            cpu_offload_optimizer_ratio=1,
+            cpu_offload_optimizer_pin_memory=False,
         )
     )
 
