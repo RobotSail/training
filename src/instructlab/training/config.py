@@ -14,6 +14,7 @@ class DeepSpeedOffloadStrategy(Enum):
 
     CPU = "cpu"
     # TODO: update this when we support ZeRO stage-3
+    # https://github.com/instructlab/training/issues/26
     # NVME = "nvme"
     NONE = None
 
