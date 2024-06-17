@@ -36,7 +36,7 @@ class DataProcessArgs(BaseModel):
 
     data_path: str
     data_output_path: str
-    max_seq_len: str  # defines the max sequence length of a sample
+    max_seq_len: int  # defines the max sequence length of a sample
     model_path: str  # either a HF model name or path to HF model
 
 
