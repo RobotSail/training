@@ -16,10 +16,12 @@ from torch.distributed import (
     all_reduce,
 )
 import subprocess
-import omegaconf
 
+from omegaconf import OmegaConf
+from omegaconf.errors import MissingMandatoryValue
 import deepspeed
-from deepspeed.ops.adam import FusedAdam
+from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
+
 from instructlab.training import config
 from instructlab.training.multipack_sampler import (
     find_packing_max_batch_len_and_grad_accum,
@@ -51,10 +53,9 @@ def get_ds_config(world_size, samples_per_gpu, grad_accum, opts: DeepSpeedOption
         "steps_per_print": 1,
         "zero_optimization": {
             "stage": 2,
-            # TODO(osilkin): update these
-            "offload_param": {"device": "none"},
-            # TODO(osilkin): update these
-            "offload_optimizer": {"device": "none"},
+            # this option is only supported with DeepSpeed ZeRO stage 3
+            "offload_param": False,
+            "offload_optimizer": False,
         },
         "bf16": {"enabled": True},
         "gradient_clipping": 1.0,
@@ -65,7 +66,10 @@ def get_ds_config(world_size, samples_per_gpu, grad_accum, opts: DeepSpeedOption
     if opts.cpu_offload_optimizer:
         # this only works when the cpu offload optimizer is enabled
         ds_config["zero_optimization"]["offload_optimizer"] = {
-            "device": opts.ds_offload_strat
+            # CPU offloading is the only option available in ZeRO stage 2
+            "device": "cpu",
+            "pin_memory": opts.cpu_offload_optimizer_pin_memory,
+            "ratio": opts.cpu_offload_optimizer_ratio,
         }
     return ds_config
 
@@ -198,7 +202,16 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
 
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
+    # need to use this only when the CPU offload optimizer is enabled
     optimizer = FusedAdam(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95))
+    if args.cpu_offload_optimizer:
+        print(
+            "\033[33m!!! CPU offload optimizer enabled, switching optimizer to DeepSpeedCPUAdam !!!\033[0m"
+        )
+        optimizer = DeepSpeedCPUAdam(
+            model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95)
+        )
+
     lr_scheduler = get_scheduler(
         name="cosine",
         optimizer=optimizer,
@@ -449,27 +462,28 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
     """
     Wrapper around the main training job that calls torchrun.
     """
-    # process the training data
-    if not os.path.exists(train_args.data_output_dir):
-        os.makedirs(train_args.data_output_dir, exist_ok=True)
-    dp.main(
-        DataProcessArgs(
-            # XXX(osilkin): make a decision here, either:
-            #   1. the CLI is fully responsible for managing where the data is written
-            #   2. we never cache it and simply write it to a tmp file everytime.
-            #
-            # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
-            # where the user has a defined place for new temporary data to be written.
-            data_output_path=train_args.data_output_dir,
-            model_path=train_args.model_path,
-            data_path=train_args.data_path,
-            max_seq_len=train_args.max_seq_len,
-        )
-    )
 
-    if not os.path.exists(train_args.ckpt_output_dir):
-        os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
     try:
+        # process the training data
+        if not os.path.exists(train_args.data_output_dir):
+            os.makedirs(train_args.data_output_dir, exist_ok=True)
+        dp.main(
+            DataProcessArgs(
+                # XXX(osilkin): make a decision here, either:
+                #   1. the CLI is fully responsible for managing where the data is written
+                #   2. we never cache it and simply write it to a tmp file everytime.
+                #
+                # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
+                # where the user has a defined place for new temporary data to be written.
+                data_output_path=train_args.data_output_dir,
+                model_path=train_args.model_path,
+                data_path=train_args.data_path,
+                max_seq_len=train_args.max_seq_len,
+            )
+        )
+
+        if not os.path.exists(train_args.ckpt_output_dir):
+            os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
         command = [
             "torchrun",
             f"--nnodes={torch_args.nnodes}",
@@ -516,6 +530,8 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
 
     except KeyboardInterrupt:
         print("Process interrupted by user")
+    except MissingMandatoryValue as e:
+        print(f"Missing {e.key}")
     except Exception as e:
         print(f"An error occurred: {str(e)}")
     finally:

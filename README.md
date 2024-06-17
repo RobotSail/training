@@ -42,9 +42,12 @@ Using the library is fairly straightforward, simply import the necessary items,
 namely:
 
 ```py
-from instructlab.training.main_ds import run_training
-from instructlab.training.config import TorchrunArgs, TrainingArgs, DeepSpeedOptions
-
+from instructlab.training import (
+	run_training,
+	TorchrunArgs,
+	TrainingArgs,
+	DeepSpeedOptions
+)
 ```
 
 Then, define the training arguments which will serve as the

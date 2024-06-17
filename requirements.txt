@@ -13,6 +13,7 @@ dolomite_engine
 trl==0.9.4
 omegaconf>=2.3.0
 peft
+pydantic>=2.7.0
 # TODO: add dolomite_engine as a dependency
 # for the time being, you can install it using this command:
 # pip install git+https://github.com/ibm-granite/dolomite-engine.git
