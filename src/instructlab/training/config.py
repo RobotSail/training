@@ -64,6 +64,7 @@ class LoraOptions(BaseModel):
     target_modules: list[str] = Field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
     )
+    quantize_data_type: QuantizeDataType = QuantizeDataType.NONE
 
 
 class DeepSpeedOptions(BaseModel):
@@ -119,5 +120,7 @@ class TrainingArgs(BaseModel):
         )
     )
 
-    quantize_dtype: QuantizeDataType = QuantizeDataType.NONE
+    # TODO(osilkin): support quantized full fine-tuning:
+    # https://github.com/instructlab/training/issues/28
+    # quantize_dtype: QuantizeDataType = QuantizeDataType.NONE
     lora: LoraOptions | None = None

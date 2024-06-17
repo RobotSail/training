@@ -35,6 +35,8 @@ from instructlab.training.utils import (
     setup_logger,
     convert_loss_to_reduce_sum,
     StreamablePopen,
+    prepare_peft_model,
+    patch_target_module,
 )
 from instructlab.training.config import (
     TrainingArgs,
@@ -79,7 +81,6 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
     if args.lora_r > 0 and args.lora_quant_bits == 4:
         from transformers import BitsAndBytesConfig
 
-        # TODO(osilkin): decouple LoRA and BitsAndBytes here since you can quantize w/o lora
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -147,7 +148,6 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
     if args.lora_r > 0:
         # if lora
         from peft import LoraConfig
-        from utils import prepare_peft_model, patch_target_module
 
         if args.lora_target_modules is None:
             args.__dict__["lora_target_modules"] = [
@@ -463,69 +463,71 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs):
     Wrapper around the main training job that calls torchrun.
     """
 
-    try:
-        # process the training data
-        if not os.path.exists(train_args.data_output_dir):
-            os.makedirs(train_args.data_output_dir, exist_ok=True)
-        dp.main(
-            DataProcessArgs(
-                # XXX(osilkin): make a decision here, either:
-                #   1. the CLI is fully responsible for managing where the data is written
-                #   2. we never cache it and simply write it to a tmp file everytime.
-                #
-                # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
-                # where the user has a defined place for new temporary data to be written.
-                data_output_path=train_args.data_output_dir,
-                model_path=train_args.model_path,
-                data_path=train_args.data_path,
-                max_seq_len=train_args.max_seq_len,
-            )
+    # process the training data
+    if not os.path.exists(train_args.data_output_dir):
+        os.makedirs(train_args.data_output_dir, exist_ok=True)
+    dp.main(
+        DataProcessArgs(
+            # XXX(osilkin): make a decision here, either:
+            #   1. the CLI is fully responsible for managing where the data is written
+            #   2. we never cache it and simply write it to a tmp file everytime.
+            #
+            # An important reason for why #1 would be preferable is in the case of OpenShift/SELinux
+            # where the user has a defined place for new temporary data to be written.
+            data_output_path=train_args.data_output_dir,
+            model_path=train_args.model_path,
+            data_path=train_args.data_path,
+            max_seq_len=train_args.max_seq_len,
         )
+    )
 
-        if not os.path.exists(train_args.ckpt_output_dir):
-            os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
-        command = [
-            "torchrun",
-            f"--nnodes={torch_args.nnodes}",
-            f"--node_rank={torch_args.node_rank}",
-            f"--nproc_per_node={torch_args.nproc_per_node}",
-            f"--rdzv_id={torch_args.rdzv_id}",
-            f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
-            __file__,
-            f"--model_name_or_path={train_args.model_path}",
-            f"--data_path={train_args.data_output_dir}/data.jsonl",
-            f"--output_dir={train_args.ckpt_output_dir}",
-            f"--num_epochs={train_args.num_epochs}",
-            f"--effective_batch_size={train_args.effective_batch_size}",
-            f"--learning_rate={train_args.learning_rate}",
-            f"--num_warmup_steps={train_args.warmup_steps}",
-            f"--save_samples={train_args.save_samples}",
-            f"--log_level=INFO",
-            f"--max_batch_len={train_args.max_batch_len}",
-            f"--seed={train_args.random_seed}",
-        ]
+    if not os.path.exists(train_args.ckpt_output_dir):
+        os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
+    command = [
+        "torchrun",
+        f"--nnodes={torch_args.nnodes}",
+        f"--node_rank={torch_args.node_rank}",
+        f"--nproc_per_node={torch_args.nproc_per_node}",
+        f"--rdzv_id={torch_args.rdzv_id}",
+        f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
+        __file__,
+        f"--model_name_or_path={train_args.model_path}",
+        f"--data_path={train_args.data_output_dir}/data.jsonl",
+        f"--output_dir={train_args.ckpt_output_dir}",
+        f"--num_epochs={train_args.num_epochs}",
+        f"--effective_batch_size={train_args.effective_batch_size}",
+        f"--learning_rate={train_args.learning_rate}",
+        f"--num_warmup_steps={train_args.warmup_steps}",
+        f"--save_samples={train_args.save_samples}",
+        f"--log_level=INFO",
+        f"--max_batch_len={train_args.max_batch_len}",
+        f"--seed={train_args.random_seed}",
+    ]
 
-        if train_args.mock_data:
-            command.append("--mock_data")
-            if train_args.mock_len:
-                command.append(f"--mock_len={train_args.mock_len}")
+    if train_args.mock_data:
+        command.append("--mock_data")
+        if train_args.mock_len:
+            command.append(f"--mock_len={train_args.mock_len}")
 
-        if train_args.is_padding_free:
-            command.append("--is_granite")
+    if train_args.is_padding_free:
+        command.append("--is_granite")
 
-        if train_args.lora:
-            command.extend(
-                [
-                    f"--lora_r={train_args.lora.rank}",
-                    f"--lora_alpha={train_args.lora.alpha}",
-                    f"--lora_dropout={train_args.lora.dropout}",
-                    f"--lora_target_modules={' '.join(train_args.lora.target_modules)}",
-                ]
-            )
-            if train_args.quantize_dtype:
-                command.append(f"--lora_quant_bits={train_args.quantize_dtype}")
+    if train_args.lora:
+        command.extend(
+            [
+                f"--lora_r={train_args.lora.rank}",
+                f"--lora_alpha={train_args.lora.alpha}",
+                f"--lora_dropout={train_args.lora.dropout}",
+                f"--lora_target_modules={' '.join(train_args.lora.target_modules)}",
+            ]
+        )
+        # hard-code 4-bit quantization for now, change this when we add more
+        if train_args.lora.quantize_data_type == config.QuantizeDataType.NF4:
+            command.append("--lora_quant_bits=4")
 
-        print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
+    print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
+    process = None
+    try:
         process = StreamablePopen(command)
 
     except KeyboardInterrupt:

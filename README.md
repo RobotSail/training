@@ -131,7 +131,6 @@ Here is a breakdown of the general options:
 | mock_data | Whether or not to use mock, randomly generated,  data during training. For debug purposes |
 | mock_data_len | Max length of a single mock data sample. Equivalent to `max_seq_len` but for mock data. |
 | deepspeed_options | Config options to specify for the DeepSpeed optimizer. |
-| quantize_dtype | If quantizing, this is the datatype to use. |
 | lora | Options to specify if you intend to perform a LoRA train instead of a full fine-tune. |
 
 
@@ -143,7 +142,7 @@ allow you to customize aspects of the ZeRO stage 2 optimizer.
 
 | Field | Description |
 | --- | --- |
-| ds_offload_strat | The offloading strategy used for DeepSpeed stage-2, valid options are: `"cpu"`, `"nvme"`, or `None`. Only works when `cpu_offload_optimizer` is set to `True`.  | 
+| ds_offload_strat | The offloading strategy used for DeepSpeed stage-2, valid options are: `"cpu"` or `None`. Only works when `cpu_offload_optimizer` is set to `True`.  | 
 | cpu_offload_optimizer | Whether or not to do CPU offloading in DeepSpeed stage 2. |
 
 
@@ -152,21 +151,31 @@ allow you to customize aspects of the ZeRO stage 2 optimizer.
 If you'd like to do a LoRA train, you can specify a LoRA
 option to `TrainingArgs` via the `LoraOptions` object.
 
+```python
+from instructlab.training import LoraOptions, TrainingArgs
+
+training_args = TrainingArgs(
+	lora = LoraOptions(
+		rank = 4,
+		alpha = 32,
+		dropout = 0.1,
+	),
+	# ...
+)
+
+```
+
 Here is the definition for what we currently support today:
 
-```python
-class LoraOptions:
-    """
-    Options to specify when training using a LoRA.
-    """
+| Field | Description |
+| --- | --- |
+| rank | The rank parameter for LoRA training. |
+| alpha | The alpha parameter for LoRA training. |
+| dropout | The dropout rate for LoRA training. |
+| target_modules | The list of target modules for LoRA training. |
+| quantize_data_type | The data type for quantization in LoRA training. Valid options are `None` and `"nf4"` |
 
-    rank: int = 4
-    alpha: float = 32
-    dropout: float = 0.1
-    target_modules: list = field(
-        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
-    )
-```
+
 
 ### Customizing `TorchrunArgs` 
 
