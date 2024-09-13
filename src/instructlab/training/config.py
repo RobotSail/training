@@ -4,11 +4,11 @@ Collection of config objects used in the InstructLab training library.
 
 # Standard
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 import os
 
 # Third Party
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, validator
 
 
 # public API
@@ -24,6 +24,18 @@ class DeepSpeedOffloadStrategy(Enum):
     # https://github.com/instructlab/training/issues/26
     # NVME = "nvme"
     NONE = None
+
+
+# public API
+class DistributedTrainingBackend(Enum):
+    """
+    Defines the set of supported distributed training backends supported by the training library.
+    """
+
+    # TODO(osilkin): we eventually want to enable CPU-only training as well, so there will be
+    #                a 'none' option that we'll want to introduce
+    FSDP = "fsdp"
+    DEEPSPEED = "deepspeed"
 
 
 # public API
@@ -106,6 +118,18 @@ class DeepSpeedOptions(BaseModel):
     save_samples: int | None = None
 
 
+class FSDPShardingStrategy(Enum):
+    FULL_SHARD = "FULL_SHARD"
+    SHARD_GRAD_OP = "SHARD_GRAD_OP"
+    NO_SHARD = "NO_SHARD"
+    HYBRID_SHARD = "HYBRID_SHARD"
+
+
+class FSDPOptions(BaseModel):
+    offload_params: Optional[bool] = False
+    sharding_strategy: FSDPShardingStrategy = FSDPShardingStrategy.NO_SHARD
+
+
 # public API
 class TrainingArgs(BaseModel):
     """
@@ -150,6 +174,15 @@ class TrainingArgs(BaseModel):
             cpu_offload_optimizer_ratio=1,
             cpu_offload_optimizer_pin_memory=False,
         )
+    )
+    fsdp_options: FSDPOptions = Field(
+        default_factory=lambda: FSDPOptions(
+            offload_params=False,
+        )
+    )
+
+    distributed_training_backend: DistributedTrainingBackend = (
+        DistributedTrainingBackend.DEEPSPEED
     )
 
     disable_flash_attn: Optional[bool] = False
