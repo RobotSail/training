@@ -220,9 +220,9 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
         num_warmup_steps=args.num_warmup_steps,
         num_training_steps=args.num_epochs * len(train_loader) // grad_accum,
     )
-    model, _, lr_scheduler, optimizer = accelerator.prepare(
-        model, deepcopy(train_loader), lr_scheduler, optimizer
-    )
+    # model, _, lr_scheduler, optimizer = accelerator.prepare(
+    #     model, deepcopy(train_loader), lr_scheduler, optimizer
+    # )
     return model, lr_scheduler, optimizer, accelerator
 
 
