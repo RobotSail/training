@@ -21,6 +21,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, get_scheduler
 import torch
 import torch.distributed
+from torch.distributed.fsdp import FullyShardedDataParallel
 
 # First Party
 from instructlab.training import config
@@ -49,8 +50,19 @@ from instructlab.training.utils import (
     save_hf_format_accelerate,
     set_random_seed,
     setup_logger,
+    get_training_cmd,
 )
 import instructlab.training.data_process as dp
+
+if "SEEN_COUNT" not in globals():
+    SEEN_COUNT = 0
+
+
+def get_script_name() -> str:
+    """
+    Returns the full file path to this training script as a string.
+    """
+    return __file__
 
 
 def setup_optimizer(args, model):
@@ -176,6 +188,15 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
         # Third Party
         from peft import LoraConfig
 
+        print("")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+        print("\033[31m!!! Using LoRA for training !!!\033[0m")
+
         if args.lora_target_modules is None:
             args.__dict__["lora_target_modules"] = [
                 "q_proj",
@@ -298,7 +319,7 @@ def maybe_resume_training(args, model):
 
 def train(
     args,
-    model,
+    model: FullyShardedDataParallel,
     optimizer,
     lr_scheduler,
     accelerator: Accelerator,
@@ -361,6 +382,7 @@ def train(
             if not args.is_granite:
                 for k in batch:
                     batch[k] = batch[k].to(local_rank)
+            # torch.distributed.breakpoint()
             output = model(
                 **batch,
                 use_cache=False,
@@ -633,100 +655,11 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs) -> None:
             chat_tmpl_path=train_args.chat_tmpl_path,
         )
     )
-
     if not os.path.exists(train_args.ckpt_output_dir):
         os.makedirs(train_args.ckpt_output_dir, exist_ok=True)
-    command = [
-        "torchrun",
-        f"--nnodes={torch_args.nnodes}",
-        f"--node_rank={torch_args.node_rank}",
-        f"--nproc_per_node={torch_args.nproc_per_node}",
-        f"--rdzv_id={torch_args.rdzv_id}",
-        f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
-        __file__,
-        f"--model_name_or_path={train_args.model_path}",
-        f"--data_path={train_args.data_output_dir}/data.jsonl",
-        f"--output_dir={train_args.ckpt_output_dir}",
-        f"--num_epochs={train_args.num_epochs}",
-        f"--effective_batch_size={train_args.effective_batch_size}",
-        f"--learning_rate={train_args.learning_rate}",
-        f"--num_warmup_steps={train_args.warmup_steps}",
-        f"--save_samples={train_args.save_samples}",
-        f"--log_level=INFO",
-        f"--max_batch_len={train_args.max_batch_len}",
-        f"--seed={train_args.random_seed}",
-        f"--chat-tmpl-path={train_args.chat_tmpl_path}",
-    ]
-
-    if train_args.checkpoint_at_epoch:
-        command.append("--checkpoint_at_epoch")
-
-    if train_args.mock_data:
-        command.append("--mock_data")
-        if train_args.mock_len:
-            command.append(f"--mock_len={train_args.mock_len}")
-
-    if train_args.is_padding_free:
-        command.append("--is_granite")
-
-    if train_args.disable_flash_attn:
-        if train_args.is_padding_free:
-            raise RuntimeError(
-                "ERROR: Trying to use padding-free transformer without flash attention is not supported"
-            )
-        command.append("--disable_flash_attn")
-
-    if train_args.lora:
-        command.extend(
-            [
-                f"--lora_r={train_args.lora.rank}",
-                f"--lora_alpha={train_args.lora.alpha}",
-                f"--lora_dropout={train_args.lora.dropout}",
-                "--lora_target_modules",
-            ]
-        )
-        command.extend(train_args.lora.target_modules)
-        # hard-code 4-bit quantization for now, change this when we add more
-        quant_dtype = train_args.lora.quantize_data_type
-        quantization_is_enabled = quant_dtype in (
-            config.QuantizeDataType.NF4,
-            config.QuantizeDataType.NF4.value,
-        )
-        if quantization_is_enabled:
-            command.append("--lora_quant_bits=4")
-
-    # specify which distributed training backend we use
-    command.append(
-        f"--distributed_training_framework={train_args.distributed_backend.value}"
+    command = get_training_cmd(
+        torch_args=torch_args, train_args=train_args, script=__name__
     )
-
-    # deepspeed options
-    if train_args.deepspeed_options.save_samples:
-        command.append(f"--save_samples_ds={train_args.deepspeed_options.save_samples}")
-    if train_args.deepspeed_options.cpu_offload_optimizer:
-        command.extend(
-            [
-                "--cpu_offload_optimizer",
-                f"--cpu_offload_optimizer_ratio={train_args.deepspeed_options.cpu_offload_optimizer_ratio}",
-            ]
-        )
-        if train_args.deepspeed_options.cpu_offload_optimizer_pin_memory:
-            command.append("--cpu_offload_optimizer_pin_memory")
-
-    # FSDP Options
-    if train_args.fsdp_options.cpu_offload_params:
-        command.extend(
-            [
-                "--cpu_offload_params_fsdp",
-            ]
-        )
-
-    # specify the sharding strategy
-    command.append(
-        f"--fsdp_sharding_strategy={train_args.fsdp_options.sharding_strategy.value}"
-    )
-
-    print(f"\033[92mRunning command: {' '.join(command)}\033[0m")
     process = None
     try:
         process = StreamablePopen(

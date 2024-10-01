@@ -8,7 +8,9 @@ from torch.distributed.fsdp import (  # FullyShardedDataParallel as FSDP,
     MixedPrecision,
     ShardingStrategy,
 )
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.wrap import (
+    transformer_auto_wrap_policy,
+)
 import torch
 
 # First Party
@@ -55,16 +57,13 @@ def get_fsdp_config(args, model):
     # Third Party
     from accelerate.utils import FullyShardedDataParallelPlugin
     from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+    from peft.utils.other import fsdp_auto_wrap_policy
 
-    block_name = model._no_split_modules[0]
+    # block_name = model._no_split_modules[0]
 
+    torch.distributed.breakpoint()
     fsdp_plugin = FullyShardedDataParallelPlugin(
-        auto_wrap_policy=partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={
-                get_module_class_from_name(model, block_name),
-            },
-        ),
+        auto_wrap_policy=fsdp_auto_wrap_policy(model),
         limit_all_gathers=True,
         mixed_precision_policy=MixedPrecision(
             param_dtype=torch.bfloat16,
@@ -74,11 +73,15 @@ def get_fsdp_config(args, model):
         backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
         sharding_strategy=ShardingStrategy[args.fsdp_sharding_strategy],
         cpu_offload=CPUOffload(args.cpu_offload_params_fsdp),
+        use_orig_params=True,
+        cpu_ram_efficient_loading=True,
+        sync_module_states=False,
+        state_dict_type="FULL_STATE_DICT",
     )
     return fsdp_plugin
 
 
-def setup_accelerator(args, model, grad_accum):
+def setup_accelerator(args, model, grad_accum) -> Accelerator:
     if args.distributed_training_framework == "deepspeed":
         # Third Party
         from deepspeed import DeepSpeedEngine
@@ -111,8 +114,6 @@ def setup_accelerator(args, model, grad_accum):
         raise ValueError(
             f"Unknown sharding framework: {args.distributed_training_framework}"
         )
-    accelerator = Accelerator(
-        **accel_args,
-    )
+    accelerator = Accelerator(**accel_args, mixed_precision="bf16")
     accelerator.even_batches = False
     return accelerator

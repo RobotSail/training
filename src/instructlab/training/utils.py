@@ -40,6 +40,9 @@ import torch
 import torch.nn.functional as F
 
 
+from .config import TrainingArgs, TorchrunArgs, QuantizeDataType
+
+
 def retrieve_chat_template(chat_tmpl_path):
     try:
         spec = importlib.util.spec_from_file_location("spcl_chat_tmpl", chat_tmpl_path)
@@ -778,3 +781,113 @@ def set_random_seed(seed):
         np.random.seed(seed)
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+
+
+def get_training_cmd(
+    torch_args: TorchrunArgs, train_args: TrainingArgs, script: str
+) -> List[str]:
+    """Builds and returns the exact command that will be called to start training.
+    The result can be passed directly to StreamablePopen
+
+    Args:
+        torch_args (TorchrunArgs): Options for the `torchrun` command
+        train_args (TrainingArgs): Parameters of the actual training job
+        script (str): File path to the training script that should be executed
+
+    Raises:
+        RuntimeError: Raises an error if flash-attention is disabled when using a padding-free transformer.
+
+    Returns:
+        List[str]: The exact command based on the two arguments.
+    """
+    command = [
+        "torchrun",
+        f"--nnodes={torch_args.nnodes}",
+        f"--node_rank={torch_args.node_rank}",
+        f"--nproc_per_node={torch_args.nproc_per_node}",
+        f"--rdzv_id={torch_args.rdzv_id}",
+        f"--rdzv_endpoint={torch_args.rdzv_endpoint}",
+        script,
+        f"--model_name_or_path={train_args.model_path}",
+        f"--data_path={train_args.data_output_dir}/data.jsonl",
+        f"--output_dir={train_args.ckpt_output_dir}",
+        f"--num_epochs={train_args.num_epochs}",
+        f"--effective_batch_size={train_args.effective_batch_size}",
+        f"--learning_rate={train_args.learning_rate}",
+        f"--num_warmup_steps={train_args.warmup_steps}",
+        f"--save_samples={train_args.save_samples}",
+        f"--log_level=INFO",
+        f"--max_batch_len={train_args.max_batch_len}",
+        f"--seed={train_args.random_seed}",
+        f"--chat-tmpl-path={train_args.chat_tmpl_path}",
+    ]
+
+    if train_args.checkpoint_at_epoch:
+        command.append("--checkpoint_at_epoch")
+
+    if train_args.mock_data:
+        command.append("--mock_data")
+        if train_args.mock_len:
+            command.append(f"--mock_len={train_args.mock_len}")
+
+    if train_args.is_padding_free:
+        command.append("--is_granite")
+
+    if train_args.disable_flash_attn:
+        if train_args.is_padding_free:
+            raise RuntimeError(
+                "ERROR: Trying to use padding-free transformer without flash attention is not supported"
+            )
+        command.append("--disable_flash_attn")
+
+    if train_args.lora:
+        command.extend(
+            [
+                f"--lora_r={train_args.lora.rank}",
+                f"--lora_alpha={train_args.lora.alpha}",
+                f"--lora_dropout={train_args.lora.dropout}",
+                "--lora_target_modules",
+            ]
+        )
+        command.extend(train_args.lora.target_modules)
+        # hard-code 4-bit quantization for now, change this when we add more
+        quant_dtype = train_args.lora.quantize_data_type
+        quantization_is_enabled = quant_dtype in (
+            QuantizeDataType.NF4,
+            QuantizeDataType.NF4.value,
+        )
+        if quantization_is_enabled:
+            command.append("--lora_quant_bits=4")
+
+    # specify which distributed training backend we use
+    command.append(
+        f"--distributed_training_framework={train_args.distributed_backend.value}"
+    )
+
+    # deepspeed options
+    if train_args.deepspeed_options.save_samples:
+        command.append(f"--save_samples_ds={train_args.deepspeed_options.save_samples}")
+    if train_args.deepspeed_options.cpu_offload_optimizer:
+        command.extend(
+            [
+                "--cpu_offload_optimizer",
+                f"--cpu_offload_optimizer_ratio={train_args.deepspeed_options.cpu_offload_optimizer_ratio}",
+            ]
+        )
+        if train_args.deepspeed_options.cpu_offload_optimizer_pin_memory:
+            command.append("--cpu_offload_optimizer_pin_memory")
+
+    # FSDP Options
+    if train_args.fsdp_options.cpu_offload_params:
+        command.extend(
+            [
+                "--cpu_offload_params_fsdp",
+            ]
+        )
+
+    # specify the sharding strategy
+    command.append(
+        f"--fsdp_sharding_strategy={train_args.fsdp_options.sharding_strategy.value}"
+    )
+
+    return command
