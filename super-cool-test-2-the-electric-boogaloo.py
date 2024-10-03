@@ -53,50 +53,50 @@ from argparse import ArgumentParser
 # )
 
 
-torchargs = TorchrunArgs(
-    nproc_per_node=4,
-    nnodes=1,
-    node_rank=0,
-    rdzv_endpoint="127.0.0.1:12345",
-    rdzv_id=12345,
-)
+# torchargs = TorchrunArgs(
+#     nproc_per_node=4,
+#     nnodes=1,
+#     node_rank=0,
+#     rdzv_endpoint="127.0.0.1:12345",
+#     rdzv_id=12345,
+# )
 
-trainargs = TrainingArgs(
-    chat_tmpl_path="/home/ec2-user/training/src/instructlab/training/chat_templates/ibm_generic_tmpl.py",
-    ckpt_output_dir="checkpoints",
-    data_output_dir="/dev/shm",
-    data_path="/home/ec2-user/training/sample-data/train_all_pruned_SDG.jsonl",
-    disable_flash_attn=False,
-    effective_batch_size=3840,
-    is_padding_free=True,
-    deepspeed_options=DeepSpeedOptions(
-        cpu_offload_optimizer=True,
-        cpu_offload_optimizer_pin_memory=True,
-        cpu_offload_optimizer_ratio=1,
-    ),
-    fsdp_options=FSDPOptions(
-        offload_params=True, sharding_strategy=ShardingStrategies.FULL_SHARD
-    ),
-    lora=LoraOptions(
-        target_modules=["c_proj"],
-        rank=4,
-    ),
-    distributed_backend="fsdp",
-    save_samples=450,
-    learning_rate=1e-6,
-    # FSDP max
-    # max_batch_len=2722,
-    # max_seq_len=2722,
-    max_batch_len=4096,
-    max_seq_len=4096,
-    mock_data=False,
-    mock_data_len=0,
-    model_path="/home/ec2-user/.cache/instructlab/models/instructlab/granite-7b-lab",
-    # model_path="/home/ec2-user/training/checkpoints/hf_format/samples_384",
-    num_epochs=1,
-    random_seed=128,
-    warmup_steps=25,
-)
+# trainargs = TrainingArgs(
+#     chat_tmpl_path="/home/ec2-user/training/src/instructlab/training/chat_templates/ibm_generic_tmpl.py",
+#     ckpt_output_dir="checkpoints",
+#     data_output_dir="/dev/shm",
+#     data_path="/home/ec2-user/training/sample-data/train_all_pruned_SDG.jsonl",
+#     disable_flash_attn=False,
+#     effective_batch_size=3840,
+#     is_padding_free=True,
+#     deepspeed_options=DeepSpeedOptions(
+#         cpu_offload_optimizer=True,
+#         cpu_offload_optimizer_pin_memory=True,
+#         cpu_offload_optimizer_ratio=1,
+#     ),
+#     fsdp_options=FSDPOptions(
+#         offload_params=True, sharding_strategy=ShardingStrategies.FULL_SHARD
+#     ),
+#     lora=LoraOptions(
+#         target_modules=["c_proj"],
+#         rank=4,
+#     ),
+#     distributed_backend="fsdp",
+#     save_samples=450,
+#     learning_rate=1e-6,
+#     # FSDP max
+#     # max_batch_len=2722,
+#     # max_seq_len=2722,
+#     max_batch_len=4096,
+#     max_seq_len=4096,
+#     mock_data=False,
+#     mock_data_len=0,
+#     model_path="/home/ec2-user/.cache/instructlab/models/instructlab/granite-7b-lab",
+#     # model_path="/home/ec2-user/training/checkpoints/hf_format/samples_384",
+#     num_epochs=1,
+#     random_seed=128,
+#     warmup_steps=25,
+# )
 
 if __name__ == "__main__":
     parser = ArgumentParser()
