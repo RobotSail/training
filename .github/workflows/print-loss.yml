@@ -2,8 +2,9 @@ name: Print Loss
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
     branches:
+      - log-print-dev
       - main
 
 jobs:
