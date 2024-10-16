@@ -28,7 +28,7 @@ jobs:
           ls -al
       - name: Print loss
         run: |
-          python scripts/create-loss-graph.py --log-file test-log.jsonl
+          python scripts/create-loss-graph.py --log-file test-log.jsonl --output-file base64-graph.txt
       - name: Print a comment
         uses: actions/github-script@v7
         with:
@@ -48,20 +48,15 @@ jobs:
           script: |
             // let's read the contents of the local directory 
             const fs = require('fs')
+            
+            const graphBuff = fs.readFileSync('base64-graph.txt', {
+              encoding: 'utf-8',
+            })
 
-            let local_files = '';
-            try {
-              const files = fs.readdirSync('.');
-              for (const file of files) {
-                local_files += file + '\n'
-              }
-            } catch (err) {
-              console.error(err);
-            } 
-
+            const comment = `The current changes yield the following loss curve:\n\n![Graph of loss curve](data:image/png;base64,${graphBuff.toString()})`
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: 'Aha! I was able to update the contents and have GH actions read it!' + '\n' + 'The files are: ' + local_files,
+              body: comment
             })
