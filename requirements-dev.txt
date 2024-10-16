@@ -11,3 +11,7 @@ ipython
 ipykernel
 jupyter
 
+
+# for printing out the loss
+matplotlib
+numpy
