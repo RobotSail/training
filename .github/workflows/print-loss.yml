@@ -21,7 +21,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
       - name: Generate test data
@@ -40,5 +39,30 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: 'Thank you for your contribution! Please make sure to review our contribution guidelines.'
+              body: 'Aha! I was able to update the contents and have GH actions read it!'
+            })
+
+      - name: Read the local directory
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            // let's read the contents of the local directory 
+            const fs = require('fs')
+
+            let local_files = '';
+            try {
+              const files = await fs.readdir(path);
+              for (const file of files)
+                local_files += file
+                console.log(file);
+            } catch (err) {
+              console.error(err);
+            } 
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Aha! I was able to update the contents and have GH actions read it!' + '\n' + 'The files are: ' + local_files,
             })
