@@ -40,6 +40,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from instructlab.training.config import DistributedBackend
+
 
 def retrieve_chat_template(chat_tmpl_path):
     try:
@@ -305,8 +307,9 @@ def patch_target_module(
 
 
 def prepare_peft_model(
-    model,
+    model: PreTrainedModel,
     peft_config,
+    distributed_backend: DistributedBackend,
     gradient_checkpointing=True,
     gradient_checkpointing_kwargs={"use_reentrant": True},
     mixed_precision="bf16",
@@ -314,6 +317,7 @@ def prepare_peft_model(
     # will guard this
     # Third Party
     from peft import (
+        LoraModel,
         PeftConfig,
         PeftModel,
         get_peft_model,
@@ -355,7 +359,11 @@ def prepare_peft_model(
                     make_inputs_require_grad
                 )
 
-        model = get_peft_model(model, peft_config)
+        if distributed_backend == DistributedBackend.FSDP:
+            # FSDP doesn't like `get_peft_model` as it leads to dtype mismatches
+            model = LoraModel(model, peft_config, "default")
+        else:
+            model = get_peft_model(model, peft_config)
         if mixed_precision == "bf16" and getattr(model, "is_loaded_in_4bit", False):
             peft_module_casting_to_bf16(model)
 
@@ -630,7 +638,7 @@ def _copy_no_lora_dict(state_dict):
 
 
 def save_dict_accelerate(
-    accelerator,
+    accelerator: Accelerator,
     state_to_save,
     save_directory,
     max_shard_size="5GB",
@@ -687,8 +695,57 @@ def save_hf_format_accelerate(
         return get_state_dict_unpatched(model, unwrap=unwrap)
 
     accelerator.get_state_dict = _get_state_dict_patched
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import StateDictType, FullStateDictConfig
+    from transformers import AutoModelForCausalLM
+    from peft import LoraModel, LoraConfig
+
+    cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
+        model: FSDP = model
+        state = model.state_dict()
+        torch.save(state, "./oleg-sanity-check-3-pre-state-dict.pt")
+        # state = {k: v.to(torch.bfloat16) for k, v in state.items()}
+        if accelerator.is_main_process:
+            # currently a copy of the exact settings.
+            # TODO: make this pull from the settings that the user passed in
+            config = LoraConfig(
+                r=4,
+                target_modules=["q_proj", "v_proj", "o_proj", "k_proj"],
+                lora_alpha=32,
+                lora_dropout=0.1,
+                bias="none",
+                task_type="CAUSAL_LM",
+            )
+            _model = AutoModelForCausalLM.from_pretrained(
+                "instructlab/granite-7b-lab",
+                device_map="cpu",
+                torch_dtype=torch.bfloat16,
+            )
+            # tokenizer2 = AutoModelForCausalLM.from_pretrained('instructlab/granite-7b-lab')
+            _model = LoraModel(_model, config, "default")
+            _model.load_state_dict(state)
+            _model.merge_and_unload()
+            _save_out_dir = "./oleg-sanity-check-6"
+            _model.save_pretrained(_save_out_dir, safe_serialization=True)
+            _model.config.to_json_file(f"{_save_out_dir}/config.json")
+            tokenizer.save_pretrained(_save_out_dir)
+        print(f"[rank {local_rank}]")
+        dist.barrier()
+        return
 
     if accelerator.is_main_process:
+        from IPython import embed
+
+        embed()
+    dist.barrier()
+
+    if accelerator.is_main_process:
+        from IPython import embed
+
+        embed()
         if is_lora:
             model.module.merge_adapter()
             model_state = model.module.state_dict()
@@ -711,6 +768,7 @@ def save_hf_format_accelerate(
                 safe_serialization=True,
             )
             model.module.unmerge_adapter()
+    dist.barrier()
 
     if not is_lora:
         accelerator.save_model(

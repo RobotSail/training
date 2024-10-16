@@ -17,6 +17,7 @@ from deepspeed.runtime.zero.utils import ZeRORuntimeException
 
 # pylint: disable=no-name-in-module
 from instructlab.dolomite.hf_models import GPTDolomiteForCausalLM
+from peft import LoraModel, LoraConfig
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, get_scheduler
 import torch
@@ -211,10 +212,12 @@ def setup_model(args, tokenizer, train_loader, grad_accum):
             task_type="CAUSAL_LM",
             target_modules=args.lora_target_modules,
         )
-        model = prepare_peft_model(
-            model, peft_config, gradient_checkpointing=not args.is_granite
-        )
-
+        if args.distributed_training_framework == "fsdp":
+            model = LoraModel(model, peft_config, "default")
+        else:
+            model = prepare_peft_model(
+                model, peft_config, gradient_checkpointing=not args.is_granite
+            )
     elif not args.is_granite:
         model.gradient_checkpointing_enable()
 
