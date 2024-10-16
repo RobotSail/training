@@ -51,10 +51,10 @@ jobs:
 
             let local_files = '';
             try {
-              const files = await fs.readdir('.');
-              for (const file of files)
-                local_files += file
-                console.log(file);
+              const files = fs.readdirSync('.');
+              for (const file of files) {
+                local_files += file + '\n'
+              }
             } catch (err) {
               console.error(err);
             } 
