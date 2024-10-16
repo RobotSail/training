@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements-dev.txt
+          pip install -r requirements-dev-lite.txt
 
       - name: Generate test data
         run: |
@@ -51,7 +51,7 @@ jobs:
 
             let local_files = '';
             try {
-              const files = await fs.readdir(path);
+              const files = await fs.readdir('.');
               for (const file of files)
                 local_files += file
                 console.log(file);

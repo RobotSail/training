@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# lightweight version of the dev requirements, for use in CI
+
+pre-commit>=3.0.4,<5.0
+pylint>=2.16.2,<4.0
+pylint-pydantic
+tox>=4.4.2,<5
+
+ipython
+ipykernel
+jupyter
+
+
+# for printing out the loss
+matplotlib
+numpy
