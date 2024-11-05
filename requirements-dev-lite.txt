@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-
--r requirements.txt
+# lightweight version of the dev requirements, for use in CI
 
 pre-commit>=3.0.4,<5.0
 pylint>=2.16.2,<4.0
