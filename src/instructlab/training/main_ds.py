@@ -46,6 +46,8 @@ from transformers.modeling_outputs import CausalLMOutput
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch.utils.tensorboard.writer import SummaryWriter
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 # First Party
 from instructlab.training import config
@@ -397,6 +399,10 @@ def train(
 ):
     model.train()
 
+    # figure out where to put the logs for the summary writer
+    log_dir = args.log_dir if args.log_dir is not None else args.output_dir
+    writer = SummaryWriter(log_dir=log_dir)
+
     global_step = 1
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
@@ -459,9 +465,12 @@ def train(
             output: CausalLMOutput = model(
                 **batch,
                 use_cache=False,
+                output_hidden_states=True,
             )
 
             loss = None
+            raw_kl_loss = None
+            raw_ce_loss = None
             if args.distill:
                 # teacher_model should always be provided when `args.distill` is enabled
                 if TYPE_CHECKING:
@@ -479,11 +488,27 @@ def train(
                     alpha=args.distill_alpha,
                     temp=args.distill_temp,
                 )
+                raw_kl_loss = loss.detach().item()
 
             else:
                 loss = output.loss
+                raw_ce_loss = loss.detach().item()
 
             assert loss is not None, "loss cannot be equal to None!"
+
+            # apply the L2 regularization of the weights + activations
+            # weight_l2 = 0.0
+            # for param in model.parameters():
+            #     weight_l2 += torch.sum(param**2)
+
+            activation_l2 = 0.0
+            if args.l2_lambda > 0:
+                for activation in output.hidden_states:
+                    activation_l2 += torch.sum(activation**2)
+
+            # loss += (weight_l2 + activation_l2) * args.l2_lambda
+            loss += (activation_l2) * args.l2_lambda
+
             log_loss = loss.detach().item()
 
             num_loss_counted_tokens, micro_batch_size, log_loss = map(
@@ -503,6 +528,8 @@ def train(
             loss = (
                 loss / num_loss_counted_tokens * world_size
             )  # dividing by the total number of non-padding tokens and multiplying by the number of GPUs so when accelerate averages by world_size, it will be the correct loss.
+            if raw_kl_loss is not None:
+                raw_kl_loss = raw_kl_loss / num_loss_counted_tokens * world_size
             print(
                 f"Epoch: {epoch}, Step: {global_step}, Rank: {dist.get_rank()}, loss = {loss}"
             )
@@ -514,6 +541,11 @@ def train(
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
+
+            # # Calculate L2 norm of weights
+            # params = model.state_dict()
+            # flattened_params = torch.cat([p.flatten() for p in params.values()])
+            # param_l2_norm = torch.norm(flattened_params, p=2)
 
             if local_rank == 0:
                 elapsed_time = time.time() - start
@@ -553,6 +585,85 @@ def train(
                         # "weight_norm": weight_norm,
                     }
                 )
+
+                # compute the "actual step" so it doesn't mess up the tensorboard graphs
+                actual_step = global_step + args.last_step
+
+                # compute L1 & L2 norms of activations
+                act_l1_norms = torch.stack(
+                    [act.norm(p=1) for act in output.hidden_states]
+                )
+                act_l2_norms = torch.stack(
+                    [act.norm(p=2) for act in output.hidden_states]
+                )
+
+                act_max_l1_norm = act_l1_norms.max().detach().cpu().item()
+                act_max_l2_norm = act_l2_norms.max().detach().cpu().item()
+                act_min_l1_norm = act_l1_norms.min().detach().cpu().item()
+                act_min_l2_norm = act_l2_norms.min().detach().cpu().item()
+
+                writer.add_scalar(
+                    "Activations/l2_norm_max", act_max_l2_norm, actual_step
+                )
+                writer.add_scalar(
+                    "Activations/l2_norm_min", act_min_l2_norm, actual_step
+                )
+                writer.add_scalar(
+                    "Activations/l2_norm_avg",
+                    act_l2_norms.mean().detach().cpu().item(),
+                    actual_step,
+                )
+                writer.add_scalar(
+                    "Activations/l1_norm_max", act_max_l1_norm, actual_step
+                )
+                writer.add_scalar(
+                    "Activations/l1_norm_min", act_min_l1_norm, actual_step
+                )
+                writer.add_scalar(
+                    "Activations/l1_norm_avg",
+                    act_l1_norms.mean().detach().cpu().item(),
+                    actual_step,
+                )
+
+                activation_l2 = activation_l2.detach().item()
+                writer.add_scalar("Activations/l2_penalty", activation_l2, actual_step)
+
+                # compute the L2 norms of parameters
+                # param_l2_norms = torch.stack([p.norm(p=2) for p in model.parameters()])
+                # param_max_l2_norm = param_l2_norms.max().detach().cpu().item()
+                # param_min_l2_norm = param_l2_norms.min().detach().cpu().item()
+                # param_mean_l2_norm = param_l2_norms.mean().detach().cpu().item()
+
+                # param_mean_l2_norm = total_norm.detach().cpu().item()
+
+                # writer.add_scalar(
+                #     "Weights/l2_norm", param_l2_norm.detach().cpu().item(), actual_step
+                # )
+                # writer.add_scalar("Weights/min_l2_norm", param_min_l2_norm, actual_step)
+                # writer.add_scalar(
+                #     "Weights/mean_l2_norm", param_mean_l2_norm, actual_step
+                # )
+
+                writer.add_scalar("Loss/total", loss.detach().item(), actual_step)
+                if raw_kl_loss is not None:
+                    writer.add_scalar("Loss/kl-divergence", raw_kl_loss, actual_step)
+                if raw_ce_loss is not None:
+                    writer.add_scalar("Loss/cross-entropy", raw_ce_loss, actual_step)
+                assert args.l2_lambda is not None
+                assert args.l2_lambda > 0
+                activation_l2_penalty = activation_l2 * args.l2_lambda
+                print(f"{activation_l2_penalty=}, {activation_l2=}, {args.l2_lambda=}")
+                print()
+                writer.add_scalar(
+                    "Loss/l2_activation_penalty",
+                    activation_l2 * args.l2_lambda,
+                    actual_step,
+                )
+                # writer.add_scalar("Gradnorm/total", global_grad_norm, actual_step)
+                writer.add_scalar("Throughput/overall", overall_throughput, actual_step)
+                writer.add_scalar("LR/Scheduler-current-lr", current_lr, actual_step)
+                # todo: pull the learning rates from AdamW
+                writer.flush()
 
             if args.save_samples > 0 and (
                 global_step * batch_size % args.save_samples == 0
@@ -991,6 +1102,7 @@ if __name__ == "__main__":
             "Use 1.0 for complete distillation, and 0.0 for complete cross-entropy loss."
         ),
     )
+    parser.add_argument("--l2_lambda", type=float, default=0)
     parser.add_argument("--model_name_or_path", type=str)
     parser.add_argument("--data_path", type=str)
     parser.add_argument("--output_dir", type=str)
@@ -1031,6 +1143,7 @@ if __name__ == "__main__":
         "--save_samples",
         type=int,
         help="The number of samples seen between each checkpoint save. If --save_samples<=0, this feature is disabled.",
+        default=0,
     )
     parser.add_argument(
         "--save_samples_ds",
@@ -1049,6 +1162,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--accelerate_full_state_at_epoch",
         action="store_true",
+        default=False,
         help="Save full model state using Accelerate after finishing an epoch.",
     )
     parser.add_argument("--log_level", type=str, default="INFO")
@@ -1086,7 +1200,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=1e-3,
+        default=0,
         help="Weight decay rate for optimizers that support it.",
     )
     parser.add_argument(
@@ -1120,6 +1234,15 @@ if __name__ == "__main__":
         default=os.path.join(
             os.path.dirname(__file__), "chat_templates/ibm_generic_tmpl.py"
         ),
+    )
+    parser.add_argument(
+        "--log_dir", default=None, help="Directory to put the tensorboard data."
+    )
+    parser.add_argument(
+        "--beta_1", default=0.9, help="AdamW beta for first-moment estimate."
+    )
+    parser.add_argument(
+        "--beta_2", default=0.999, help="AdamW beta for first-moment estimate."
     )
     parser.add_argument("--disable_flash_attn", action="store_true")
     args = parser.parse_args()
