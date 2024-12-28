@@ -465,7 +465,7 @@ def train(
             output: CausalLMOutput = model(
                 **batch,
                 use_cache=False,
-                output_hidden_states=True,
+                output_hidden_states=args.regularize_activations,
             )
 
             loss = None
@@ -502,12 +502,12 @@ def train(
             #     weight_l2 += torch.sum(param**2)
 
             activation_l2 = 0.0
-            if args.l2_lambda > 0:
+            if args.regularize_activations:
                 for activation in output.hidden_states:
                     activation_l2 += torch.sum(activation**2)
 
             # loss += (weight_l2 + activation_l2) * args.l2_lambda
-            loss += (activation_l2) * args.l2_lambda
+            loss += activation_l2 * args.l2_lambda
 
             log_loss = loss.detach().item()
 
@@ -1080,6 +1080,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Path or reference to a HuggingFace repo of the knowledge model.",
+    )
+    parser.add_argument(
+        "--regularize_activations",
+        type=bool,
+        default=False,
+        help="Whether or not we should regularize the model activations by applying an L2 penalty.",
     )
     parser.add_argument(
         "--distill",
