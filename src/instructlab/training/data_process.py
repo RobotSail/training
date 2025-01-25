@@ -182,9 +182,9 @@ def unmask_message_content(
     for i in range(len(final_sentence_tk)):
         for seq in special_sequences:
             if final_sentence_tk[i : i + len(seq)] == seq:
-                assert all(
-                    final_labels[i + j] == -100 for j in range(len(seq))
-                ), f"Special sequence {seq} is unmasked"
+                assert all(final_labels[i + j] == -100 for j in range(len(seq))), (
+                    f"Special sequence {seq} is unmasked"
+                )
 
     # 2. No pretrain tokens should be in the final sentence_tk
     assert all(
@@ -223,7 +223,7 @@ def print_masked_samples(data, tokenizer, is_pretrain, num_proc):
             text, orig_text = get_masked_and_orig_text(sample)
             print(f"\033[35mOriginal Input: {orig_text}\n\033[0m")
             print(
-                f"\033[33m{'Pretraining' if is_pretrain else 'Instruction'} ex sample {i+1}: {text}\033[0m"
+                f"\033[33m{'Pretraining' if is_pretrain else 'Instruction'} ex sample {i + 1}: {text}\033[0m"
             )
             if i > 1:
                 break
@@ -314,7 +314,7 @@ def main(args: DataProcessArgs):
     )
     biggest_10_percent = np.quantile(lens, (90 + np.arange(11)) / 100.0)
     for i, q in enumerate(biggest_10_percent):
-        print(f"quantile {90+i*1}th: {q}")
+        print(f"quantile {90 + i * 1}th: {q}")
     print("\033[0m")
 
     num_dropped_samples = np.sum(lens > args.max_seq_len)

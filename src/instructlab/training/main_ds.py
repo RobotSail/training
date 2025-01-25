@@ -503,8 +503,10 @@ def train(
 
             activation_l2 = 0.0
             if args.regularize_activations:
+                # compute the average l2
                 for activation in output.hidden_states:
                     activation_l2 += torch.sum(activation**2)
+                activation_l2 = activation_l2 / len(output.hidden_states)
 
             # loss += (weight_l2 + activation_l2) * args.l2_lambda
             loss += activation_l2 * args.l2_lambda
@@ -590,43 +592,46 @@ def train(
                 actual_step = global_step + args.last_step
 
                 # compute L1 & L2 norms of activations
-                act_l1_norms = torch.stack(
-                    [act.norm(p=1) for act in output.hidden_states]
-                )
-                act_l2_norms = torch.stack(
-                    [act.norm(p=2) for act in output.hidden_states]
-                )
+                if args.regularize_activations:
+                    act_l1_norms = torch.stack(
+                        [act.norm(p=1) for act in output.hidden_states]
+                    )
+                    act_l2_norms = torch.stack(
+                        [act.norm(p=2) for act in output.hidden_states]
+                    )
 
-                act_max_l1_norm = act_l1_norms.max().detach().cpu().item()
-                act_max_l2_norm = act_l2_norms.max().detach().cpu().item()
-                act_min_l1_norm = act_l1_norms.min().detach().cpu().item()
-                act_min_l2_norm = act_l2_norms.min().detach().cpu().item()
+                    act_max_l1_norm = act_l1_norms.max().detach().cpu().item()
+                    act_max_l2_norm = act_l2_norms.max().detach().cpu().item()
+                    act_min_l1_norm = act_l1_norms.min().detach().cpu().item()
+                    act_min_l2_norm = act_l2_norms.min().detach().cpu().item()
 
-                writer.add_scalar(
-                    "Activations/l2_norm_max", act_max_l2_norm, actual_step
-                )
-                writer.add_scalar(
-                    "Activations/l2_norm_min", act_min_l2_norm, actual_step
-                )
-                writer.add_scalar(
-                    "Activations/l2_norm_avg",
-                    act_l2_norms.mean().detach().cpu().item(),
-                    actual_step,
-                )
-                writer.add_scalar(
-                    "Activations/l1_norm_max", act_max_l1_norm, actual_step
-                )
-                writer.add_scalar(
-                    "Activations/l1_norm_min", act_min_l1_norm, actual_step
-                )
-                writer.add_scalar(
-                    "Activations/l1_norm_avg",
-                    act_l1_norms.mean().detach().cpu().item(),
-                    actual_step,
-                )
+                    writer.add_scalar(
+                        "Activations/l2_norm_max", act_max_l2_norm, actual_step
+                    )
+                    writer.add_scalar(
+                        "Activations/l2_norm_min", act_min_l2_norm, actual_step
+                    )
+                    writer.add_scalar(
+                        "Activations/l2_norm_avg",
+                        act_l2_norms.mean().detach().cpu().item(),
+                        actual_step,
+                    )
+                    writer.add_scalar(
+                        "Activations/l1_norm_max", act_max_l1_norm, actual_step
+                    )
+                    writer.add_scalar(
+                        "Activations/l1_norm_min", act_min_l1_norm, actual_step
+                    )
+                    writer.add_scalar(
+                        "Activations/l1_norm_avg",
+                        act_l1_norms.mean().detach().cpu().item(),
+                        actual_step,
+                    )
 
-                activation_l2 = activation_l2.detach().item()
-                writer.add_scalar("Activations/l2_penalty", activation_l2, actual_step)
+                    activation_l2 = activation_l2.detach().item()
+                    writer.add_scalar(
+                        "Activations/l2_penalty", activation_l2, actual_step
+                    )
 
                 # compute the L2 norms of parameters
                 # param_l2_norms = torch.stack([p.norm(p=2) for p in model.parameters()])
@@ -649,11 +654,11 @@ def train(
                     writer.add_scalar("Loss/kl-divergence", raw_kl_loss, actual_step)
                 if raw_ce_loss is not None:
                     writer.add_scalar("Loss/cross-entropy", raw_ce_loss, actual_step)
-                assert args.l2_lambda is not None
-                assert args.l2_lambda > 0
+                grad_norm_to_print = (
+                    global_grad_norm if global_grad_norm is not None else 0.0
+                )
+                writer.add_scalar("Gradnorm/global", grad_norm_to_print, actual_step)
                 activation_l2_penalty = activation_l2 * args.l2_lambda
-                print(f"{activation_l2_penalty=}, {activation_l2=}, {args.l2_lambda=}")
-                print()
                 writer.add_scalar(
                     "Loss/l2_activation_penalty",
                     activation_l2 * args.l2_lambda,
@@ -1083,7 +1088,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--regularize_activations",
-        type=bool,
+        action="store_true",
         default=False,
         help="Whether or not we should regularize the model activations by applying an L2 penalty.",
     )
@@ -1245,10 +1250,12 @@ if __name__ == "__main__":
         "--log_dir", default=None, help="Directory to put the tensorboard data."
     )
     parser.add_argument(
-        "--beta_1", default=0.9, help="AdamW beta for first-moment estimate."
+        "--beta_1", default=0.9, help="AdamW beta for first moment estimate."
     )
+
+    # 0.95 is what is currently in the existing training.
     parser.add_argument(
-        "--beta_2", default=0.999, help="AdamW beta for first-moment estimate."
+        "--beta_2", default=0.95, help="AdamW beta for second moment estimate."
     )
     parser.add_argument("--disable_flash_attn", action="store_true")
     args = parser.parse_args()
