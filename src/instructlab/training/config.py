@@ -211,3 +211,8 @@ class TrainingArgs(BaseModel):
     # will overwrite the previous checkpoint directory, keeping only one directory called
     # "last_epoch". This works alongside the '--checkpoint_at_epoch' flag.
     keep_last_checkpoint_only: Optional[bool] = False
+
+    use_liger: bool = Field(
+        default=False,
+        description="Whether to use Liger kernels for training.",
+    )
