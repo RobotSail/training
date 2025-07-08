@@ -5,7 +5,7 @@ Collection of config objects used in the InstructLab training library.
 """
 
 # Standard
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import List, Literal, Optional
 
 # Third Party
@@ -141,10 +141,11 @@ class FSDPOptions(BaseModel):
     sharding_strategy: ShardingStrategies = ShardingStrategies.HYBRID_SHARD
 
 
-class Optimizer(Enum):
+class Optimizer(StrEnum):
     ADAMW = "Adamw"
     CPUAdam = "CPUAdam"
     FusedAdam = "FusedAdam"
+    Muon = "Muon"
 
 
 # public API
@@ -245,4 +246,19 @@ class TrainingArgs(BaseModel):
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO"
+    )
+
+    optimizer: Optimizer = Field(
+        description="The optimizer to use",
+    )
+
+    # Logging configuration fields
+    logger_type: str = Field(
+        default="async",
+        description="Logging backend(s) to use. Can be 'async', 'tensorboard', 'wandb', or comma-separated combinations like 'async,tensorboard'",
+    )
+
+    run_name: str | None = Field(
+        default=None,
+        description="Name for the training run. Can include placeholders like {time}, {rank}, {utc_time}, {local_rank}",
     )

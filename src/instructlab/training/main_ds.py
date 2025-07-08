@@ -8,6 +8,8 @@ import os
 import subprocess
 import time
 import warnings
+import json
+from termcolor import colored
 
 try:
     # Third Party
@@ -214,6 +216,26 @@ def train(
                     },
                     extra={"step": global_step},
                 )
+
+                log_data = {
+                    "epoch": epoch,
+                    "step": global_step,
+                    "rank": torch.distributed.get_rank(),
+                    "overall_throughput": overall_throughput,
+                    "lr": current_lr,
+                    "cuda_mem_allocated": cuda_mem_allocated,
+                    "cuda_malloc_retries": cuda_malloc_retries,
+                    "num_loss_counted_tokens": int(num_loss_counted_tokens),
+                    "num_tokens_rank0": int(total_length),
+                    "batch_size": int(micro_batch_size),
+                    "total_loss": float(log_loss / num_loss_counted_tokens),
+                    "samples_seen": samples_seen,
+                    "gradnorm": global_grad_norm,
+                    "total_samples": len(accelerator.train_loader.dataset),
+                    "num_epoch_steps": num_epoch_steps,
+                    # "weight_norm": weight_norm,
+                }
+                print(colored(json.dumps(log_data, indent=2), "green"))
 
             if args.save_samples > 0 and (
                 global_step * batch_size % args.save_samples == 0
@@ -463,7 +485,7 @@ def main(args):
     optimizer = setup_optimizer(
         model=m,
         cpu_offload=args.cpu_offload_optimizer,
-        name=None,  # choose based on backend
+        name=args.optimizer,  # choose based on backend
         learning_rate=args.learning_rate,
     )
     accelerator.prepare_with_optimizer(
@@ -498,7 +520,9 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs) -> None:
     # Enable package logging propagation before setting up loggers
     propagate_package_logs(True)
     setup_root_logger(train_args.log_level)
-    setup_metric_logger("async", None, train_args.ckpt_output_dir)
+    setup_metric_logger(
+        train_args.logger_type, train_args.run_name, train_args.ckpt_output_dir
+    )
 
     logger = logging.getLogger("instructlab.training")
     logger.info("Starting training setup...")
@@ -547,10 +571,16 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs) -> None:
         f"--log_level={train_args.log_level}",
         f"--max_batch_len={train_args.max_batch_len}",
         f"--seed={train_args.random_seed}",
+        f"--logger_type={train_args.logger_type}",
     ]
+
+    command.append(f"--optimizer={train_args.optimizer.value}")
 
     if train_args.chat_tmpl_path is not None:
         command.append(f"--chat-tmpl-path={train_args.chat_tmpl_path}")
+
+    if train_args.run_name is not None:
+        command.append(f"--run_name={train_args.run_name}")
 
     if train_args.use_liger:
         command.append("--use_liger")
@@ -645,6 +675,7 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs) -> None:
             f"{train_args.ckpt_output_dir}/full_logs_global{torch_args.node_rank}.log",
             command,
         )
+        print(" ".join(command))
         process.listen()
     except KeyboardInterrupt as e:
         logger.info("Training subprocess interrupted by user.")
@@ -830,6 +861,10 @@ if __name__ == "__main__":
             "Keep only the last checkpoint directory - overwrite the previous ones. Useful for saving disk space."
             "The last checkpoint will be saved as 'last_epoch'."
         ),
+    )
+    parser.add_argument(
+        "--optimizer",
+        type=str,
     )
 
     parser.add_argument(

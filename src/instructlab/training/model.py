@@ -4,6 +4,7 @@ import functools
 import logging
 import math
 import os
+from instructlab.training.muon import Muon
 
 logger = logging.getLogger("instructlab.training")
 
@@ -418,10 +419,32 @@ class CausalLMModel(Model):
         self.model.gradient_checkpointing_enable()
 
 
+import torch.nn.parameter as P
+
+
+# THIS IS GRANITE SPECIFIC AND NOT SCALABLE
+def is_muon_param(name: str, param: P.Parameter):
+    if name.startswith("model.embed_tokens") or "lm_head" in name:
+        return False
+    return param.ndim == 2
+
+
+def muon_params(named_params):
+    for n, p in named_params:
+        if is_muon_param(n, p):
+            yield p
+
+
+def adam_params(named_params):
+    for n, p in named_params:
+        if not is_muon_param(n, p):
+            yield p
+
+
 def setup_optimizer(
     model: Model,
     cpu_offload: bool,
-    name: Optimizer | None,
+    name: str | None,
     learning_rate: int,
     betas: Tuple[float, float] = (0.9, 0.95),
 ) -> torch.optim.Optimizer:
@@ -437,27 +460,52 @@ def setup_optimizer(
     Returns:
         A PyTorch optimizer instance
     """
-    optimizer_cls = None
-    if name is not None:
-        if name == Optimizer.ADAMW:
-            optimizer_cls = AdamW
-        elif name == Optimizer.CPUAdam:
-            optimizer_cls = DeepSpeedCPUAdam
-        elif name == Optimizer.FusedAdam:
-            optimizer_cls = FusedAdam
-        else:
-            raise ValueError(f"Unknown optimizer type: {name}")
-    else:
-        if model.distributed_framework == DistributedBackend.FSDP:
-            optimizer_cls = AdamW
-        elif model.distributed_framework == DistributedBackend.DEEPSPEED:
-            if cpu_offload:
-                optimizer_cls = DeepSpeedCPUAdam
-            else:
-                optimizer_cls = FusedAdam
-    factory = functools.partial(
-        optimizer_cls, model.parameters(), lr=learning_rate, betas=betas
-    )
-    if optimizer_cls is AdamW:
-        return factory(weight_decay=0.0)
-    return factory()
+
+    params_for_adam = adam_params(model.named_parameters())
+    params_for_muon = muon_params(model.named_parameters())
+
+    assert name is not None
+
+    given_optimizer = Optimizer(name)
+
+    if given_optimizer == Optimizer.Muon:
+        optimizer = Muon(
+            muon_params=params_for_muon,
+            adamw_params=params_for_adam,
+            wd=0.0,
+            lr=learning_rate,
+            adamw_betas=betas,
+        )
+
+    elif given_optimizer == Optimizer.ADAMW:
+        optimizer = AdamW(
+            betas=betas,
+            lr=learning_rate,
+            params=model.parameters(),
+            weight_decay=0.0,
+        )
+
+    # optimizer_cls = None
+    # if name is not None:
+    #     if name == Optimizer.ADAMW:
+    #         optimizer_cls = AdamW
+    #     elif name == Optimizer.CPUAdam:
+    #         optimizer_cls = DeepSpeedCPUAdam
+    #     elif name == Optimizer.FusedAdam:
+    #         optimizer_cls = FusedAdam
+    #     else:
+    #         raise ValueError(f"Unknown optimizer type: {name}")
+    # else:
+    #     if model.distributed_framework == DistributedBackend.FSDP:
+    #         optimizer_cls = AdamW
+    #     elif model.distributed_framework == DistributedBackend.DEEPSPEED:
+    #         if cpu_offload:
+    #             optimizer_cls = DeepSpeedCPUAdam
+    #         else:
+    #             optimizer_cls = FusedAdam
+    # factory = functools.partial(
+    #     optimizer_cls, model.parameters(), lr=learning_rate, betas=betas
+    # )
+    # if optimizer_cls is AdamW:
+    #     return factory(weight_decay=0.0)
+    return optimizer
