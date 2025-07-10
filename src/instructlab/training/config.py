@@ -142,10 +142,10 @@ class FSDPOptions(BaseModel):
 
 
 class Optimizer(StrEnum):
-    ADAMW = "Adamw"
-    CPUAdam = "CPUAdam"
-    FusedAdam = "FusedAdam"
-    Muon = "Muon"
+    ADAMW = "AdamW"
+    CPU_ADAM = "CPUAdam"
+    FUSED_ADAM = "FusedAdam"
+    MUON = "Muon"
 
 
 # public API
@@ -250,6 +250,7 @@ class TrainingArgs(BaseModel):
 
     optimizer: Optimizer = Field(
         description="The optimizer to use",
+        default=Optimizer.ADAMW,
     )
 
     # Logging configuration fields
@@ -261,4 +262,15 @@ class TrainingArgs(BaseModel):
     run_name: str | None = Field(
         default=None,
         description="Name for the training run. Can include placeholders like {time}, {rank}, {utc_time}, {local_rank}",
+    )
+
+    # Evaluation configuration fields
+    eval_every_n_steps: int = Field(
+        default=100,
+        description="How often to evaluate the model. This is the number of steps (calls to `optimizer.step()`) between evaluations.",
+    )
+
+    validation_split: float = Field(
+        default=0,
+        description="The fraction of the training data to use for validation. This is the ratio of the training data to the validation data.",
     )

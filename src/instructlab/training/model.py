@@ -468,7 +468,7 @@ def setup_optimizer(
 
     given_optimizer = Optimizer(name)
 
-    if given_optimizer == Optimizer.Muon:
+    if given_optimizer == Optimizer.MUON:
         optimizer = Muon(
             muon_params=params_for_muon,
             adamw_params=params_for_adam,
@@ -485,6 +485,9 @@ def setup_optimizer(
             weight_decay=0.0,
         )
 
+    assert optimizer is not None
+
+    assert given_optimizer in [Optimizer.MUON, Optimizer.ADAMW]
     # optimizer_cls = None
     # if name is not None:
     #     if name == Optimizer.ADAMW:

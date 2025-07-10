@@ -10,6 +10,7 @@ import time
 import warnings
 import json
 from termcolor import colored
+from instructlab.training.config import Optimizer
 
 try:
     # Third Party
@@ -86,8 +87,146 @@ def train(
     model: Model,
     optimizer: torch.optim.Optimizer,
     accelerator: Accelerator,
+    val_loader=None,
 ):
     model.train()
+
+    # Helper function to run validation and log metrics
+    def _run_validation(current_epoch: int, current_step: int):
+        """Runs validation on the provided `val_loader`, aggregates the token-level
+        cross entropy loss across all ranks, and logs the result.
+
+        Args:
+            current_epoch (int): The epoch we are currently on.
+            current_step (int): The global **training** step we are currently on.
+        """
+
+        if val_loader is None:
+            return  # nothing to do
+
+        model.eval()
+
+        total_loss_sum = 0.0  # accumulated sum of losses (numerator)
+        total_tokens = 0.0  # accumulated number of non-padding tokens (denominator)
+
+        # Retrieve loggers once (avoid repeated look-ups inside loop)
+        metric_logger = logging.getLogger("instructlab.training.metrics")
+
+        # Collect all validation batches first
+        all_val_batches = []
+        for v_batch in val_loader:
+            all_val_batches.append(v_batch)
+
+        # Find the maximum number of batches across all ranks
+        # This ensures all ranks participate in the same number of forward passes
+        local_batch_count = len(all_val_batches)
+        max_batches_tensor = torch.tensor(
+            [local_batch_count], dtype=torch.long, device=accelerator.device
+        )
+
+        # Use all_reduce to get the maximum across all ranks
+        torch.distributed.all_reduce(
+            max_batches_tensor, op=torch.distributed.ReduceOp.MAX
+        )
+        max_batches = max_batches_tensor.item()
+
+        with torch.no_grad():
+            # All ranks must go through the same number of iterations
+            for i in range(max_batches):
+                if i < len(all_val_batches):
+                    # This rank has data for this iteration
+                    v_batch = all_val_batches[i]
+
+                    # Each batch produced by make_collate_fn contains helper metadata we need
+                    num_loss_tokens = float(
+                        torch.tensor([v_batch.pop("num_loss_counted_tokens")])
+                    )
+                    # Also pop other metadata fields that aren't tensors
+                    v_batch.pop("num_samples", None)
+                    v_batch.pop("total_length", None)
+
+                    # Move tensors to the correct device
+                    for k in v_batch:
+                        v_batch[k] = v_batch[k].to(accelerator.device)
+
+                    output = model(
+                        **v_batch,
+                        use_cache=False,
+                    )
+
+                    v_loss = output.loss
+                    batch_loss = v_loss.detach().item()
+
+                    total_loss_sum += batch_loss
+                    total_tokens += num_loss_tokens
+                else:
+                    # This rank has no data for this iteration, but still needs to participate
+                    # in collective operations. Create a dummy batch with the same structure
+                    # but don't accumulate the results.
+                    if len(all_val_batches) > 0:
+                        # Use the structure of the first batch to create a dummy
+                        dummy_batch = {}
+                        first_batch = all_val_batches[0]
+                        for k, v in first_batch.items():
+                            if k not in [
+                                "num_loss_counted_tokens",
+                                "num_samples",
+                                "total_length",
+                            ]:
+                                # Create a dummy tensor with the same shape but zeros
+                                dummy_batch[k] = torch.zeros_like(v).to(
+                                    accelerator.device
+                                )
+
+                        # Run forward pass with dummy data (needed for FSDP collective ops)
+                        output = model(
+                            **dummy_batch,
+                            use_cache=False,
+                        )
+                        # Don't accumulate dummy results
+
+        # Reduce the accumulated values across all ranks
+        total_loss_sum, total_tokens = map(
+            float,
+            accelerator.reduce(
+                torch.tensor(
+                    [total_loss_sum, total_tokens],
+                    dtype=torch.float32,
+                    device=accelerator.device,
+                ),
+                reduction="sum",
+            ),
+        )
+
+        # Compute global cross-entropy
+        if total_tokens > 0:
+            val_ce_loss = total_loss_sum / total_tokens
+        else:
+            val_ce_loss = float("nan")
+
+        # Only log from rank 0
+        local_rank = int(os.environ["LOCAL_RANK"])
+        if local_rank == 0:
+            metric_logger.info(
+                {
+                    "epoch": current_epoch,
+                    "step": current_step,
+                    "rank": torch.distributed.get_rank(),
+                    "validation_loss": val_ce_loss,
+                },
+                extra={"step": current_step},
+            )
+
+            log_data = {
+                "epoch": current_epoch,
+                "step": current_step,
+                "rank": torch.distributed.get_rank(),
+                "validation_loss": val_ce_loss,
+            }
+            print(colored(json.dumps(log_data, indent=2), "yellow"))
+
+        # restore training mode
+        model.train()
 
     global_step = 1
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -174,6 +313,25 @@ def train(
                 optimizer.step()
                 accelerator.lr_scheduler.step()
                 optimizer.zero_grad()
+
+                # Run validation based on the configured schedule
+                if (
+                    val_loader is not None
+                    and args.eval_every_n_steps > 0
+                    and (global_step // accelerator.grad_accum)
+                    % args.eval_every_n_steps
+                    == 0
+                ):
+                    _run_validation(epoch, global_step)
+                    rank = (
+                        torch.distributed.get_rank()
+                        if torch.distributed.is_initialized()
+                        else 0
+                    )
+                    base_logger.info(
+                        f"Rank {rank} has completed validation at step {global_step}, waiting for others..."
+                    )
+                    torch.distributed.barrier()
 
             if local_rank == 0:
                 elapsed_time = time.time() - start
@@ -350,11 +508,54 @@ def main(args):
 
     flash_enabled = Model.check_flash_attn_enabled(args.disable_flash_attn)
 
-    dataset = setup_dataset(
+    # ---------------------------------------------------------------------
+    # Dataset preparation (train / validation split)
+    # ---------------------------------------------------------------------
+
+    full_dataset = setup_dataset(
         args.data_path,
         mock=args.mock_data,
         mock_len=args.mock_len,
     )
+
+    # Perform a deterministic split so that each rank sees the same partition.
+    # When `validation_split` is 0 or < 0, we skip creating a validation set.
+    from torch.utils.data import (
+        random_split,
+        Subset,
+    )  # local import to avoid polluting top of file
+
+    if args.validation_split and args.validation_split > 0.0:
+        train_len = int(len(full_dataset) * (1 - args.validation_split))
+        val_len = len(full_dataset) - train_len
+
+        # Ensure positive lengths
+        if train_len == 0 or val_len == 0:
+            raise ValueError(
+                "`validation_split` resulted in an empty train or validation split. Please adjust the value."
+            )
+
+        generator = torch.Generator().manual_seed(args.seed)
+
+        train_subset, val_subset = random_split(
+            full_dataset, [train_len, val_len], generator=generator
+        )
+
+        class _SubsetWithLengths(Subset):
+            """torch.utils.data.Subset that retains the `get_lengths` method used by Multipack."""
+
+            def get_lengths(self):  # type: ignore[override]
+                import numpy as _np
+
+                base_lengths = self.dataset.get_lengths()
+                # Convert indices to numpy array for advanced indexing
+                return _np.asarray(base_lengths)[self.indices]
+
+        train_dataset = _SubsetWithLengths(full_dataset, train_subset.indices)
+        val_dataset = _SubsetWithLengths(full_dataset, val_subset.indices)
+    else:
+        train_dataset = full_dataset
+        val_dataset = None
 
     # This model class wraps the various AutoModel classes we support
     # based on model_type, and model_path -> choose auto_model
@@ -398,11 +599,11 @@ def main(args):
     try:
         packing_max_batch_len, grad_accum = find_packing_max_batch_len_and_grad_accum(
             num_gpus=torch.distributed.get_world_size(),
-            avg_sample_len=dataset.get_lengths().mean(),
+            avg_sample_len=train_dataset.get_lengths().mean(),
             effective_batch_size=args.effective_batch_size,
             max_batch_len_per_gpu=args.max_batch_len,
             is_padding=not flash_enabled,
-            dataset=dataset,
+            dataset=train_dataset,
             seed=args.seed,
         )
         args.sampler = "multipack"
@@ -419,8 +620,26 @@ def main(args):
         args.effective_batch_size // grad_accum // torch.distributed.get_world_size()
     )
 
+    # Validation DataLoader (if applicable)
+    val_loader = None
+    if val_dataset is not None:
+        val_loader = setup_dataloader(
+            val_dataset,
+            tokenizer.pad_token_id,
+            num_workers=4,
+            flash_enabled=flash_enabled,
+            max_batch_len=args.max_batch_len,
+            packing_max_batch_len=packing_max_batch_len,
+            samples_per_gpu=args.samples_per_gpu,
+            sampler="distributed",  # simpler eval sampling
+            seed=args.seed,
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()}: Created validation loader with {len(val_loader)} batches from {len(val_dataset)} samples"
+        )
+
     train_loader = setup_dataloader(
-        dataset,
+        train_dataset,
         tokenizer.pad_token_id,
         num_workers=8,
         flash_enabled=flash_enabled,
@@ -439,7 +658,7 @@ def main(args):
         )
         args.sampler = "distributed"
         train_loader = setup_dataloader(
-            dataset,
+            train_dataset,
             tokenizer.pad_token_id,
             num_workers=8,
             flash_enabled=flash_enabled,
@@ -454,15 +673,15 @@ def main(args):
         metric_logger.info(
             {
                 "num_gpus": torch.distributed.get_world_size(),
-                "avg_sample_len": dataset.get_lengths().mean(),
+                "avg_sample_len": train_dataset.get_lengths().mean(),
                 "effective_batch_size": args.effective_batch_size,
                 "max_batch_len_per_gpu": args.max_batch_len,
                 "packing_max_batch_len": packing_max_batch_len,
                 "grad_accum": grad_accum,
                 "num_batches": len(train_loader),
-                "avg_samples_per_batch": len(dataset) / len(train_loader),
+                "avg_samples_per_batch": len(train_dataset) / len(train_loader),
                 "samples_per_gpu": args.samples_per_gpu,
-                "total_samples": len(dataset),  # emit the total number of samples
+                "total_samples": len(train_dataset),  # emit the total number of samples
             },
             extra={"hparams": True},
         )
@@ -498,6 +717,13 @@ def main(args):
     optimizer = accelerator.optimizer
     m = accelerator.model
 
+    # Ensure the validation DataLoader is wrapped by Accelerate for proper
+    # device placement and distributed handling.
+    if val_loader is not None:
+        from copy import deepcopy as _deepcopy
+
+        val_loader = accelerator.accelerator.prepare(_deepcopy(val_loader))
+
     load_latest_full_state(args=args, accelerator=accelerator)
 
     train(
@@ -505,6 +731,7 @@ def main(args):
         model=m,
         optimizer=optimizer,
         accelerator=accelerator,
+        val_loader=val_loader,
     )
 
     torch.distributed.barrier()
@@ -572,9 +799,10 @@ def run_training(torch_args: TorchrunArgs, train_args: TrainingArgs) -> None:
         f"--max_batch_len={train_args.max_batch_len}",
         f"--seed={train_args.random_seed}",
         f"--logger_type={train_args.logger_type}",
+        f"--eval_every_n_steps={train_args.eval_every_n_steps}",
+        f"--validation_split={train_args.validation_split}",
+        f"--optimizer={train_args.optimizer.value}",
     ]
-
-    command.append(f"--optimizer={train_args.optimizer.value}")
 
     if train_args.chat_tmpl_path is not None:
         command.append(f"--chat-tmpl-path={train_args.chat_tmpl_path}")
@@ -865,8 +1093,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--optimizer",
         type=str,
+        default=Optimizer.ADAMW.value,
+        help="The optimizer to use.",
     )
-
+    parser.add_argument(
+        "--eval_every_n_steps",
+        type=int,
+        default=100,
+        help="How often to evaluate the model. This is the number of steps (calls to `optimizer.step()`) between evaluations.",
+    )
+    parser.add_argument(
+        "--validation_split",
+        type=float,
+        default=0.1,
+        help="The fraction of the training data to use for validation. This is the ratio of the training data to the validation data.",
+    )
     parser.add_argument(
         "--use_liger",
         action="store_true",

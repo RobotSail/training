@@ -10,6 +10,7 @@ __all__ = (
     "FSDPOptions",
     "ShardingStrategies",
     "DistributedBackend",
+    "Optimizer",
 )
 
 # First Party
@@ -27,6 +28,7 @@ from .config import (
     ShardingStrategies,
     TorchrunArgs,
     TrainingArgs,
+    Optimizer,
 )
 
 
