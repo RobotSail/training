@@ -13,3 +13,9 @@ trl>=0.9.4
 peft
 pydantic>=2.7.0
 aiofiles>=23.2.1
+
+# for scripts
+termcolor
+loguru
+typer
+tensorboard
